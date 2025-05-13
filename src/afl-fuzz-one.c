@@ -623,7 +623,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   /* Get a clean cksum. */
 
-  if (common_fuzz_stuff1(afl, out_buf, len)) { goto abandon_entry; }
+  if (common_fuzz_stuff(afl, out_buf, len)) { goto abandon_entry; }
 
   prev_cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
   _prev_cksum = prev_cksum;
@@ -3717,7 +3717,7 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   /* Get a clean cksum. */
 
-  if (common_fuzz_stuff1(afl, out_buf, len)) { goto abandon_entry; }
+  if (common_fuzz_stuff(afl, out_buf, len)) { goto abandon_entry; }
 
   prev_cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
   _prev_cksum = prev_cksum;

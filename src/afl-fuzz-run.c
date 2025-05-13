@@ -38,6 +38,7 @@
 #endif
 
 #include "cmplog.h"
+#include "afl-state-seed-heap.h"
 #include "asanfuzz.h"
 #ifdef PROFILING
 u64 time_spent_working = 0;
@@ -581,132 +582,309 @@ void update_state_heap(afl_state_t *afl, u32 state_id, double old_score) { // Ch
    // fclose(score_rec);
 }
 
-
-
 /*
   update the score after the target program is run with current seed
-*/
-u8 update_state_scores(afl_state_t *afl) {
+// */
+// u8 update_state_scores(afl_state_t *afl) {
 
-    if (!afl || !afl->fsrv.transition_logs || !afl->queue_top) {
-        WARNF("Missing data for update_state_scores");
+//     if (!afl || !afl->fsrv.transition_logs || !afl->queue_top) {
+//         WARNF("Missing data for update_state_scores");
+//         return 0;
+//     }
+
+//     u8 *temp = (u8 *)ck_alloc(MAP_SIZE);
+//     if (!temp) {
+//          PFATAL("Failed to allocate temp map for score update");
+//     }
+
+//     u32 total_unique_depth = 0;
+//     u32 trans_count = afl->fsrv.transition_logs->count;
+
+//     //printf("%d\n",trans_count);
+//     // --- First Pass: Calculate unique depth ---
+//     //FILE *sb1 = fopen("sbsbsb","a");
+//     for (u32 i = 0; i < trans_count; ++i) {
+//         u32 state_index = afl->fsrv.transition_logs->indexes[i];
+//         if (state_index >= MAP_SIZE) continue;
+//         if (temp[state_index] == 0) {
+//             temp[state_index] = 1;
+//             total_unique_depth++;
+//         }
+//     }
+
+//     // --- Second Pass: Update scores and seed heaps ---
+//     memset(temp, 0, MAP_SIZE * sizeof(u8)); // Reset temp map
+//     u32 cur_depth = 0; // Use u32 consistently
+//     //FILE *score_rec = fopen("score_records","a");
+//     double execution_score_base = afl->queue_top->execution_score;
+//     //fprintf(score_rec,"%lf\n", execution_score_base);
+//     double score_contribution;
+//     double new_score;
+//     double old_score; // Score before adding delta
+//     double epsilon = 1e-9;     // Small epsilon for floating point
+
+//     // Define clamping values as doubles
+//     const double MAX_SCORE_FP = 1.0e+10; // Example limits
+//     const double MIN_SCORE_FP = -1.0e+10;
+
+//     u32 heap_idx; // Index within the state_info heap array
+//     // FILE *score_rec = fopen("score_records","a");
+//     // fprintf(score_rec,"update failed, index error\n");
+//     // fclose(score_rec);
+//     for (u32 i = 0; i < trans_count; ++i) {
+//         u32 state_index = afl->fsrv.transition_logs->indexes[i];
+//         // score_rec = fopen("score_records","a");
+//         // fprintf(score_rec,"go die: %d, trans_count: %d\n", state_index, i);
+//         // fclose(score_rec);
+//         if (state_index >= MAP_SIZE) { 
+//           continue;
+//           };
+
+//         // Process each *unique* state only once for score calculation
+//         if (temp[state_index] == 0) {
+//             temp[state_index] = 1; // Mark as processed
+
+//             if (!state_map_lookup(&afl->fsrv, state_index, &heap_idx)) {
+//               // score_rec = fopen("score_records","a");
+//               // fprintf(score_rec,"go die122223: %d\n", state_index);
+//               // fclose(score_rec);
+
+//               continue;
+//             }
+
+//             state_info_t *cur_state_ptr = &afl->fsrv.state_info[heap_idx];
+
+//             // --- Calculate Score Delta using Floating-Point ---
+//             u32 shift_amount = (total_unique_depth > cur_depth) ? (total_unique_depth - cur_depth) : 0;
+//             shift_amount = MIN(shift_amount, (u32)63); // Prevent excessive shift for divisor
+
+//             // Calculate divisor (2^shift_amount)
+//             double divisor = (double)(1ULL << shift_amount);
+
+//             // *** MODIFIED LINE: Use floating-point division ***
+
+//             score_contribution = (divisor > 0.0) ? ((double)execution_score_base / divisor) : (double)execution_score_base;
+
+//             // Ensure minimum score using floating-point epsilon
+//             score_contribution = MAX(epsilon, score_contribution);
+//             //fprintf(score_rec,"go die: %d, score base:%.12f, shift:%d, score distribution: %.12f\n", state_index, execution_score_base, shift_amount, score_contribution);
+//             // Calculate new score (double + double, assuming cur_state_ptr->total_score is double)
+//             old_score = cur_state_ptr->total_score; // Read current double score
+//             new_score = old_score + score_contribution;
+//             //fprintf(score_rec,"go die: %d, new score: %10f\n", state_index, new_score);
+
+//             if (new_score > 0.0){
+//               //fprintf(score_rec,"new scores: %f\n",new_score);
+//               }
+
+
+//             // Clamp the score (using double limits)
+//             // new_score = MAX(MIN_SCORE_FP, MIN(new_score, MAX_SCORE_FP));
+//             // printf("new scores: %f\n", new_score);
+//             // --- Update State Score and Heap ---
+//             // Use atomic store if available for doubles, otherwise standard assignment
+//             // NOTE: Standard C atomics don't directly support double, might need compiler intrinsics
+//             // or rely on single-threaded access for this update.
+            
+//             cur_state_ptr->total_score = new_score; // Assuming single-threaded update context
+//             // score_rec = fopen("score_records","a");
+//             // fprintf(score_rec," updating the index: %d, with score %.10f\n", state_index, new_score);
+//             // fclose(score_rec);
+//             // Update the state heap (must be modified to handle double scores)
+//             update_state_heap(afl, state_index, old_score); // Pass double score
+            
+//             // --- Update Seed Heap (Operating on the POINTER) ---
+//             u8 res = update_seed_hits(cur_state_ptr, afl->queue_top->id);
+//             if (!res) {
+//                 insert_seed(cur_state_ptr, afl->queue_top->id, 1);
+//             }
+
+//             cur_depth++; // Increment depth only for unique states processed
+//         }
+//     } 
+//     ck_free(temp);
+//     return 1;
+// }
+#ifndef MIN_STATE_SCORE_FP
+  // Define the minimum allowed score for a state.
+  // This prevents scores from becoming excessively negative.
+  #define MIN_STATE_SCORE_FP -1.0e+12
+#endif
+
+#ifndef MAX_STATE_SCORE_FP
+  // Define the maximum allowed score for a state.
+  // This prevents scores from becoming excessively large.
+  #define MAX_STATE_SCORE_FP 1.0e+12
+#endif
+
+#ifndef DEFAULT_NEW_SEED_SCORE_IN_STATE_HEAP
+  #define DEFAULT_NEW_SEED_SCORE_IN_STATE_HEAP 5.0
+#endif
+
+
+u8 update_state_scores(afl_state_t *afl, u8 new_seed_was_saved_this_iteration) {
+
+    // --- Pre-computation Checks ---
+    if (!afl || !afl->fsrv.transition_logs || !afl->fsrv.state_info) {
+        WARNF("Missing data structures for update_state_scores (logs, state_info, or state_map).");
         return 0;
     }
 
-    u8 *temp = (u8 *)ck_alloc(MAP_SIZE);
-    if (!temp) {
-         PFATAL("Failed to allocate temp map for score update");
+    // Get the original seed that was mutated for this run.
+    // afl->queue_cur should point to this original seed.
+    struct queue_entry *original_seed_entry = afl->queue_cur;
+    if (!original_seed_entry) {
+        WARNF("afl->queue_cur is NULL in update_state_scores. Cannot attribute original seed score.");
+        // If we can't identify the original seed, we might still update state scores
+        // but skip seed heap updates for the original seed.
+    }
+    u32 original_seed_id = original_seed_entry ? original_seed_entry->id : 0xFFFFFFFF; // Invalid ID if no current original seed
+
+    // Get the number of transitions recorded in this run
+    u32 trans_count = afl->fsrv.transition_logs->count;
+    if (trans_count == 0) {
+
+        return 1; // Not a failure, just nothing to do
     }
 
-    u32 total_unique_depth = 0;
-    u32 trans_count = afl->fsrv.transition_logs->count;
+    // Get the base score for the last execution, set by common_fuzz_stuff
+    double execution_score_base = afl->current_execution_score_base;
 
-    //printf("%d\n",trans_count);
-    // --- First Pass: Calculate unique depth ---
-    //FILE *sb1 = fopen("sbsbsb","a");
+    // --- First Pass: Calculate Unique Depth and Identify Unique States ---
+    // Use calloc for zero-initialization. Use afl->fsrv.map_size for correct bounds.
+    u32 ss = afl->fsrv.map_size * sizeof(u8);
+    u8 *unique_state_tracker = ck_alloc(ss);
+    // ck_calloc PFATALs on failure, no need to check for NULL here.
+
+    u32 total_unique_depth = 0;
     for (u32 i = 0; i < trans_count; ++i) {
         u32 state_index = afl->fsrv.transition_logs->indexes[i];
-        if (state_index >= MAP_SIZE) continue;
-        if (temp[state_index] == 0) {
-            temp[state_index] = 1;
+        if (state_index >= afl->fsrv.map_size) { // Use actual map size
+             WARNF("Invalid state_index %u in transition log (map_size %u)", state_index, afl->fsrv.map_size);
+             continue;
+        }
+        if (unique_state_tracker[state_index] == 0) {
+            unique_state_tracker[state_index] = 1; // Mark as seen
             total_unique_depth++;
         }
     }
 
-    // --- Second Pass: Update scores and seed heaps ---
-    memset(temp, 0, MAP_SIZE * sizeof(u8)); // Reset temp map
-    u32 cur_depth = 0; // Use u32 consistently
-    //FILE *score_rec = fopen("score_records","a");
-    double execution_score_base = afl->queue_top->execution_score;
-    //fprintf(score_rec,"%lf\n", execution_score_base);
-    double score_contribution;
-    double new_score;
-    double old_score; // Score before adding delta
-    double epsilon = 1e-9;     // Small epsilon for floating point
+    if (total_unique_depth == 0) {
+        ck_free(unique_state_tracker);
+        return 1; // No valid unique states found
+    }
 
-    // Define clamping values as doubles
-    const double MAX_SCORE_FP = 1.0e+10; // Example limits
-    const double MIN_SCORE_FP = -1.0e+10;
+    // --- Second Pass: Update Scores for Unique States ---
+    memset(unique_state_tracker, 0, afl->fsrv.map_size * sizeof(u8)); // Reset tracker
+    u32 cur_unique_depth_index = 0; // 0-indexed count of unique states processed in this trace
 
-    u32 heap_idx; // Index within the state_info heap array
-    // FILE *score_rec = fopen("score_records","a");
-    // fprintf(score_rec,"update failed, index error\n");
-    // fclose(score_rec);
+    double epsilon = 1e-9; // Small epsilon for floating point comparisons
+
     for (u32 i = 0; i < trans_count; ++i) {
         u32 state_index = afl->fsrv.transition_logs->indexes[i];
-        // score_rec = fopen("score_records","a");
-        // fprintf(score_rec,"go die: %d, trans_count: %d\n", state_index, i);
-        // fclose(score_rec);
-        if (state_index >= MAP_SIZE) { 
-          continue;
-          };
+        if (state_index >= afl->fsrv.map_size) {
+            continue;
+        }
 
         // Process each *unique* state only once for score calculation
-        if (temp[state_index] == 0) {
-            temp[state_index] = 1; // Mark as processed
+        if (unique_state_tracker[state_index] == 0) {
+            unique_state_tracker[state_index] = 1; // Mark as processed for this pass
 
+            u32 heap_idx; // Index within the main state_info heap array
+
+            // State Lookup - Assuming all states are pre-initialized.
             if (!state_map_lookup(&afl->fsrv, state_index, &heap_idx)) {
-              // score_rec = fopen("score_records","a");
-              // fprintf(score_rec,"go die122223: %d\n", state_index);
-              // fclose(score_rec);
-
-              continue;
+                // This should not happen if all states are pre-initialized as per user's previous comment.
+                WARNF("State %u not found in state_map during update_state_scores. This indicates an issue with state initialization.", state_index);
+                continue; // Skip this problematic state.
             }
+            
+            // State exists, increment its hit_count
+            afl->fsrv.state_info[heap_idx].hit_count++;
+
 
             state_info_t *cur_state_ptr = &afl->fsrv.state_info[heap_idx];
+            double old_total_score = cur_state_ptr->total_score;
 
-            // --- Calculate Score Delta using Floating-Point ---
-            u32 shift_amount = (total_unique_depth > cur_depth) ? (total_unique_depth - cur_depth) : 0;
-            shift_amount = MIN(shift_amount, (u32)63); // Prevent excessive shift for divisor
+            // --- Calculate Score Contribution for this State ---
+            // Proximity weighting: states later in the unique trace get a larger portion of the score.
+            u32 proximity_rank = total_unique_depth - 1 - cur_unique_depth_index;
+            u32 shift_amount = MIN(proximity_rank, (u32)63); 
 
-            // Calculate divisor (2^shift_amount)
             double divisor = (double)(1ULL << shift_amount);
+            double score_contribution;
 
-            // *** MODIFIED LINE: Use floating-point division ***
-
-            score_contribution = (divisor > 0.0) ? ((double)execution_score_base / divisor) : (double)execution_score_base;
-
-            // Ensure minimum score using floating-point epsilon
-            score_contribution = MAX(epsilon, score_contribution);
-            //fprintf(score_rec,"go die: %d, score base:%.12f, shift:%d, score distribution: %.12f\n", state_index, execution_score_base, shift_amount, score_contribution);
-            // Calculate new score (double + double, assuming cur_state_ptr->total_score is double)
-            old_score = cur_state_ptr->total_score; // Read current double score
-            new_score = old_score + score_contribution;
-            //fprintf(score_rec,"go die: %d, new score: %10f\n", state_index, new_score);
-
-            if (new_score > 0.0){
-              //fprintf(score_rec,"new scores: %f\n",new_score);
-              }
-
-
-            // Clamp the score (using double limits)
-            // new_score = MAX(MIN_SCORE_FP, MIN(new_score, MAX_SCORE_FP));
-            // printf("new scores: %f\n", new_score);
-            // --- Update State Score and Heap ---
-            // Use atomic store if available for doubles, otherwise standard assignment
-            // NOTE: Standard C atomics don't directly support double, might need compiler intrinsics
-            // or rely on single-threaded access for this update.
+            if (fabs(divisor) < epsilon) { // Avoid division by zero or very small numbers
+                score_contribution = execution_score_base;
+            } else {
+                score_contribution = execution_score_base / divisor;
+            }
             
-            cur_state_ptr->total_score = new_score; // Assuming single-threaded update context
-            // score_rec = fopen("score_records","a");
-            // fprintf(score_rec," updating the index: %d, with score %.10f\n", state_index, new_score);
-            // fclose(score_rec);
-            // Update the state heap (must be modified to handle double scores)
-            update_state_heap(afl, state_index, old_score); // Pass double score
-            
-            // --- Update Seed Heap (Operating on the POINTER) ---
-            u8 res = update_seed_hits(cur_state_ptr, afl->queue_top->id);
-            if (!res) {
-                insert_seed(cur_state_ptr, afl->queue_top->id, 1);
+            // If execution_score_base was positive, ensure score_contribution is also positive (or at least non-negative).
+            if (execution_score_base > 0 && score_contribution < 0) { // Check if it flipped sign
+                score_contribution = epsilon; 
             }
 
-            cur_depth++; // Increment depth only for unique states processed
+
+            // --- Update State's Total Score ---
+            double new_total_score = old_total_score + score_contribution;
+            new_total_score = MAX(MIN_STATE_SCORE_FP, MIN(new_total_score, MAX_STATE_SCORE_FP));
+            cur_state_ptr->total_score = new_total_score;
+            update_state_heap(afl, state_index, old_total_score);
+
+            // --- Update Seed Heap for the ORIGINAL SEED ---
+            // Only update if the original seed ID is valid and the overall execution
+            // had a positive outcome (meriting reinforcement for the seed in this state).
+            if (original_seed_id != 0xFFFFFFFF && execution_score_base > 0) {
+                // The score_contribution for the state can be used as the basis for
+                // the seed's score increment within this state's local seed heap.
+                double seed_boost_for_original = score_contribution; 
+                upsert_seed_in_state_heap((seed_heap_for_state_t*)&(cur_state_ptr->top_seeds),
+                                           original_seed_id,
+                                           seed_boost_for_original);
+                cur_state_ptr->top_seeds_full = (cur_state_ptr->heap_size == MAX_TOP_SEEDS);
+            }
+
+            // --- Update Seed Heap for the NEWLY SAVED SEED (if any) ---
+            // This block executes if a new seed was saved in the *current* iteration of common_fuzz_stuff
+            // AND that new seed is different from the original seed being fuzzed (or original seed was invalid).
+            if (new_seed_was_saved_this_iteration && afl->queue_top && 
+                (original_seed_id == 0xFFFFFFFF || afl->queue_top->id != original_seed_id)) {
+                
+                u32 newly_saved_seed_id = afl->queue_top->id;
+                double seed_boost_for_new_saved_seed;
+
+                // If the overall execution that LED to this new seed was positive,
+                // use its score contribution. Otherwise, give a default positive score.
+                if (execution_score_base > 0) {
+                    // Using the same score_contribution as the original seed got for this state
+                    // implies that this new seed is also valuable for reaching this state
+                    // and contributing to this positive outcome.
+                    seed_boost_for_new_saved_seed = score_contribution;
+                } else {
+                    // This case is less likely if a new seed was saved (saving usually implies positive outcome),
+                    // but as a fallback, give it a default positive score for being a new, interesting input
+                    // that reaches this state.
+                    seed_boost_for_new_saved_seed = DEFAULT_NEW_SEED_SCORE_IN_STATE_HEAP;
+                }
+                
+                // Only add/update if the boost is positive.
+                if (seed_boost_for_new_saved_seed > 0) {
+                    upsert_seed_in_state_heap((seed_heap_for_state_t*)&(cur_state_ptr->top_seeds),
+                                               newly_saved_seed_id,
+                                               seed_boost_for_new_saved_seed);
+                    // The top_seeds_full flag would be updated based on heap_size after upsert.
+                    // This depends on how upsert_seed_in_state_heap modifies cur_state_ptr->heap_size.
+                    // For now, we assume it's managed correctly by upsert or needs re-evaluation here.
+                    cur_state_ptr->top_seeds_full = (cur_state_ptr->heap_size == MAX_TOP_SEEDS);
+                }
+            }
+            cur_unique_depth_index++; // Increment for the next unique state
         }
-    } 
-    ck_free(temp);
+    }
+    ck_free(unique_state_tracker);
     return 1;
 }
-
 
 /* Calibrate a new test case. This is done when processing the input directory
    to warn about flaky or otherwise problematic test cases early on; and when
@@ -1459,150 +1637,229 @@ abort_trimming:
 }
 
 
-/* Write a modified test case, run program, process results. Handle
-   error conditions, returning 1 if it's time to bail out. This is
-   a helper function for fuzz_one(). */
-
-u8 __attribute__((hot)) common_fuzz_stuff1(afl_state_t *afl, u8 *out_buf,
-                                          u32 len) {
-
-  u8 fault;
-
-  if (unlikely(len = write_to_testcase(afl, (void **)&out_buf, len, 0)) == 0) {
-
-    return 0;
-
-  }
-  memset(afl->shm.trans_log_map, 0, sizeof(trans_log_t));
-  fault = fuzz_run_target(afl, &afl->fsrv, afl->fsrv.exec_tmout);
-
-  // FILE *sb = fopen("sb1","a");
-  // fprintf(sb,"count%d\n",afl->shm.trans_log_map->count);
-  // fclose(sb);
-
-  if (afl->stop_soon) { return 1; }
-
-  if (fault == FSRV_RUN_TMOUT) {
-
-    if (afl->subseq_tmouts++ > TMOUT_LIMIT) {
-
-      ++afl->cur_skipped_items;
-      return 1;
-
-    }
-
-  } else {
-
-    afl->subseq_tmouts = 0;
-
-  }
-
-  /* Users can hit us with SIGUSR1 to request the current input
-     to be abandoned. */
-
-  if (afl->skip_requested) {
-
-    afl->skip_requested = 0;
-    ++afl->cur_skipped_items;
-    return 1;
-
-  }
-
-  /* This handles FAULT_ERROR for us: */
-
-  u32 discovered = save_if_interesting(afl, out_buf, len, fault);
-  afl->queued_discovered += discovered;
-  if (discovered == 0){ 
-    afl->queue_top->execution_score = -0.1;
-  }
-  update_state_scores(afl);
-
-  if (!(afl->stage_cur % afl->stats_update_freq) ||
-      afl->stage_cur + 1 == afl->stage_max) {
-
-    show_stats(afl);
-
-  }
-
-  return 0;
-
-}
+#ifndef SCORE_CRASH
+#define SCORE_CRASH                 1000.0 // 发现崩溃时的分数
+#endif
+#ifndef SCORE_NEW_HANG
+#define SCORE_NEW_HANG              50.0   // 发现新的独特挂起/超时时的分数
+#endif
+#ifndef SCORE_KNOWN_HANG_OR_TMOUT
+#define SCORE_KNOWN_HANG_OR_TMOUT   1.0    // 重复的超时/挂起时的分数 (可以很低或为负)
+#endif
+#ifndef SCORE_NEW_PATH
+#define SCORE_NEW_PATH              20.0   // 发现添加到队列的新路径时的分数
+#endif
+#ifndef SCORE_NEW_BITS_GENERIC
+#define SCORE_NEW_BITS_GENERIC      5.0    // 发现新的位图边（但不足以加入队列）时的分数
+#endif
+#ifndef SCORE_DECAY
+#define SCORE_DECAY                 -0.5   // 如果没有发生有趣的事情，则应用负分（用于状态分数衰减）
+#endif
 
 
 
 
-/* Write a modified test case, run program, process results. Handle
-   error conditions, returning 1 if it's time to bail out. This is
-   a helper function for fuzz_one(). */
 
+/*
+ * 概念性函数，用于检查独特的挂起。
+ * 如果需要，请替换为您的实际实现。
+ */
+// static u8 is_new_unique_hang(afl_state_t *afl, u8 *trace_bits) {
+//   // 检查当前 trace_bits (简化后) 是否对应于新的挂起签名
+//   // 基于 afl->virgin_tmout 或自定义挂起跟踪机制。
+//   if (!afl->non_instrumented_mode) {
+//      // 如果尚未完成，可能需要 simplify_trace
+//      return has_new_bits(afl, afl->virgin_tmout);
+//   }
+//   return 1; // 如果未插桩或无跟踪，则假设为新
+// }
+
+
+#include "afl-fuzz.h"           // Main AFL++ header
+#include "afl-state-seed-heap.h" // Include header for seed heap functions if separate
+
+#ifndef SCORE_CRASH
+#define SCORE_CRASH                 1000.0 // Score for finding a crash
+#endif
+#ifndef SCORE_NEW_HANG
+#define SCORE_NEW_HANG              50.0   // Score for finding a new unique hang/timeout
+#endif
+#ifndef SCORE_KNOWN_HANG_OR_TMOUT
+#define SCORE_KNOWN_HANG_OR_TMOUT   1.0    // Score for a repeated timeout/hang (can be low or negative)
+#endif
+#ifndef SCORE_NEW_PATH
+#define SCORE_NEW_PATH              20.0   // Score for finding a new path added to the queue
+#endif
+#ifndef SCORE_NEW_BITS_GENERIC
+#define SCORE_NEW_BITS_GENERIC      5.0    // Score for finding new bitmap edges (not queue-worthy)
+#endif
+#ifndef SCORE_DECAY
+#define SCORE_DECAY                 -0.5   // Score applied if nothing interesting happened (for state score decay)
+#endif
+// DEFAULT_NEW_SEED_SCORE_IN_STATE_HEAP is used in update_state_scores, ensure it's defined.
+
+/**
+ * @brief Executes the target with the given input, analyzes the outcome,
+ * calculates an execution score, and updates state scores accordingly.
+ * Handles timeouts and skip requests.
+ * @param afl Pointer to the main AFL++ state.
+ * @param out_buf Buffer containing the input for the target.
+ * @param len Length of the input buffer.
+ * @return 0 if fuzzing should continue for the current queue entry,
+ * 1 if it's time to abandon the current entry (stop_soon, skip, timeout limit).
+ */
 u8 __attribute__((hot)) common_fuzz_stuff(afl_state_t *afl, u8 *out_buf,
                                           u32 len) {
 
-  u8 fault;
+  u8 fault; // Stores the execution result from the target
 
-  if (unlikely(len = write_to_testcase(afl, (void **)&out_buf, len, 0)) == 0) {
-
-    return 0;
-
+  // Capture the current seed being fuzzed, as afl->queue_cur might change
+  // if save_if_interesting triggers calibration.
+  struct queue_entry * current_seed_being_fuzzed = afl->queue_cur;
+  if (!current_seed_being_fuzzed) {
+      WARNF("afl->queue_cur is NULL in common_fuzz_stuff!");
+      // This is a critical issue, likely indicates a bug elsewhere or an unexpected state.
+      // Returning 1 to abandon the current fuzz_one cycle might be safest.
+      return 1;
   }
-  memset(afl->shm.trans_log_map, 0, sizeof(trans_log_t));
+
+
+  // --- 1. Prepare and Run Target ---
+
+  // Write the potentially mutated input to the target's input file or shared memory.
+  // write_to_testcase might return 0 if a post-processor fails or input length becomes 0.
+  if (unlikely(len = write_to_testcase(afl, (void **)&out_buf, len, 0)) == 0) {
+    // If input preparation failed or resulted in zero length, skip this specific mutation.
+    // Don't abandon the whole queue entry yet, just this mutation.
+    return 0;
+  }
+
+  // Clear the transition log shared memory before the child process runs.
+  // This ensures the log only contains transitions from the upcoming execution.
+  if (likely(afl->shm.trans_log_map)) {
+      // Assuming trans_log_t has 'count' and 'indexes' members
+      memset(afl->shm.trans_log_map, 0, sizeof(trans_log_t));
+  } else {
+      // This should ideally not happen if initialization was successful.
+      WARNF("Transition log shared memory map not available in common_fuzz_stuff!");
+      // Consider if this is fatal or if state scoring should be skipped for this run.
+      // If it's critical, you might return 1 or PFATAL. For now, we'll proceed but state scoring will be impacted.
+  }
+  
+  // Update prev_saved_hangs *before* the run that might discover a new hang.
+  // This allows us to detect if save_if_interesting actually saved a new hang in this iteration.
+  afl->prev_saved_hangs = afl->saved_hangs;
+
+  // Execute the target application with the prepared input.
   fault = fuzz_run_target(afl, &afl->fsrv, afl->fsrv.exec_tmout);
 
-  // FILE *sb = fopen("sb1","a");
-  // fprintf(sb,"count%d\n",afl->shm.trans_log_map->count);
-  // fclose(sb);
 
+  // --- 2. Handle Immediate Exit/Skip Conditions ---
+
+  // Check if Ctrl+C was pressed.
   if (afl->stop_soon) { return 1; }
 
+  // Handle timeouts: Increment consecutive timeout counter. If limit reached,
+  // skip the rest of the mutations for this seed.
   if (fault == FSRV_RUN_TMOUT) {
-
     if (afl->subseq_tmouts++ > TMOUT_LIMIT) {
-
+      WARNF("Input from '%s' caused %d consecutive timeouts, abandoning this queue entry.",
+            current_seed_being_fuzzed->fname, TMOUT_LIMIT);
       ++afl->cur_skipped_items;
-      return 1;
-
+      // Assign a penalty score before abandoning the entry.
+      afl->current_execution_score_base = SCORE_DECAY * 10.0; // Example heavy penalty
+      if (likely(afl->fsrv.transition_logs) && afl->shm.trans_log_map) { // Check if logs are available before updating
+           update_state_scores(afl, 0); // Pass 0 for new_seed_was_saved
+      }
+      return 1; // Abandon this queue entry for this fuzz_one cycle.
     }
-
   } else {
-
-    afl->subseq_tmouts = 0;
-
+    afl->subseq_tmouts = 0; // Reset counter if the run wasn't a timeout.
   }
 
-  /* Users can hit us with SIGUSR1 to request the current input
-     to be abandoned. */
-
+  // Handle external skip request (SIGUSR1).
   if (afl->skip_requested) {
-
     afl->skip_requested = 0;
     ++afl->cur_skipped_items;
-    return 1;
-
+    // Assign decay score before skipping.
+    afl->current_execution_score_base = SCORE_DECAY;
+     if (likely(afl->fsrv.transition_logs) && afl->shm.trans_log_map) {
+        update_state_scores(afl, 0); // Pass 0 for new_seed_was_saved
+     }
+    return 1; // Abandon this queue entry for this fuzz_one cycle.
   }
 
-  /* This handles FAULT_ERROR for us: */
-  u32 sb = afl->queued_discovered;
-  afl->queued_discovered += save_if_interesting(afl, out_buf, len, fault);
-  // FILE *f = fopen("scorerrrrr","a");
-  // fprintf(f,"score: %f\n", afl->queue_top->execution_score);
-  // fclose(f);
-  //update_state_scores(afl);
-  if (afl->queued_discovered > sb) {
-     //update_state_scores(afl, score);
-    //FILE *f = fopen("scorerrrrr","a");
-    // fprintf(f,"score: %f\n", afl->queue_top->execution_score);
-    // fclose(f);
-    update_state_scores(afl);
-    }
 
+  // --- 3. Analyze Execution Results & Save Interesting Cases ---
+
+  // Keep track if save_if_interesting adds a new entry to the main queue.
+  u32 sb_queued_discovered = afl->queued_discovered; // Store count before save_if_interesting
+  // 'discovered_this_run' will be 1 if save_if_interesting saved a new seed to the main queue, 0 otherwise.
+  u32 discovered_this_run = save_if_interesting(afl, out_buf, len, fault); 
+  // afl->queued_discovered is updated inside save_if_interesting if a new seed is added.
+
+  afl->queued_discovered += discovered_this_run;
+  u8 new_seed_was_saved_this_iteration = (afl->queued_discovered > sb_queued_discovered);
+
+
+  // Check if *any* new bitmap edges were hit in this run, even if not saved as a new seed.
+  // This check should happen *after* save_if_interesting, as it might classify counts and update virgin maps.
+  u8 new_bits_overall = has_new_bits(afl, afl->virgin_bits);
+
+
+  // --- 4. Calculate Execution Score ---
+
+  // Determine the score based *only* on the outcome of this single execution.
+  double exec_score_for_this_run = 0.0;
+
+  if (fault == FSRV_RUN_CRASH) {
+      // Highest score for finding a crash.
+      exec_score_for_this_run = SCORE_CRASH;
+  } else if (fault == FSRV_RUN_TMOUT) {
+      // Score depends on whether it's a potentially new/unique hang.
+      // Using the increase in saved_hangs (updated by save_if_interesting) as a proxy.
+      if (afl->saved_hangs > afl->prev_saved_hangs) { 
+           exec_score_for_this_run = SCORE_NEW_HANG;
+      } else {
+           exec_score_for_this_run = SCORE_KNOWN_HANG_OR_TMOUT;
+      }
+  } else if (new_seed_was_saved_this_iteration) { 
+      // Good score if it resulted in a new entry in the main queue.
+      exec_score_for_this_run = SCORE_NEW_PATH;
+  } else if (new_bits_overall) {
+      // Moderate score if new bitmap edges were found, but not enough for the main queue.
+      exec_score_for_this_run = SCORE_NEW_BITS_GENERIC;
+  } else {
+      // Negative score (decay) if no crash, hang, or new coverage was found.
+      exec_score_for_this_run = SCORE_DECAY;
+  }
+
+  // Store the calculated score in the dedicated field within afl_state_t.
+  // update_state_scores will read this value.
+  afl->current_execution_score_base = exec_score_for_this_run;
+
+
+  // --- 5. Update State Scores (Unconditionally for all analyzed runs) ---
+
+  // Update the scores of all states visited in this execution based on the
+  // current_execution_score_base. This also updates the internal seed heaps
+  // for each visited state, crediting the *original* seed (current_seed_being_fuzzed)
+  // and potentially the *newly saved seed*.
+  // Only proceed if the transition log structure is valid and was populated.
+  if (likely(afl->fsrv.transition_logs) && afl->shm.trans_log_map && afl->shm.trans_log_map->count > 0) {
+       update_state_scores(afl, new_seed_was_saved_this_iteration); // Pass the flag
+  }
+
+
+  // --- 6. Update UI Stats ---
+
+  // Refresh the UI periodically or at the end of a stage.
   if (!(afl->stage_cur % afl->stats_update_freq) ||
-      afl->stage_cur + 1 == afl->stage_max) {
-
+      (afl->stage_cur + 1 == afl->stage_max)) {
     show_stats(afl);
-
   }
 
+  // Return 0 to signal that fuzzing for the current queue entry should continue.
   return 0;
 
-}
-
+} // end common_fuzz_stuff

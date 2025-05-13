@@ -1041,250 +1041,432 @@ state_info_t **get_top_states(afl_forkserver_t *fsrv, double percentage, u32 *co
    previously-unseen bytes (temp_v) and marks them as favored, at least
    until the next run. The favored entries are given more air time during
    all fuzzing steps. */
-
+#ifndef STATE_BASED_CULLING_PROB
+#define STATE_BASED_CULLING_PROB 50
+#endif
 void cull_queue(afl_state_t *afl) {
-  sharedmem_t shm = afl->shm;
-  // trans_log_t *sb = (trans_log_t *) afl->shm.trans_log_map;
-  // FILE *sbfile = fopen("topstates","a");
-  // // for (u32 i = 0; i < 65536; i++){
-  // //   fprintf(sbfile,"%.10f\n", afl->fsrv.state_info[i].total_score);
-  // // }
+
+    // If score_changed is not set (meaning no new paths found recently by anyone)
+    // or if in non_instrumented_mode, the original culling logic might skip.
+    // We can decide if state-based culling should run regardless or also depend on this.
+    // For now, let's make the choice between strategies primary.
   
-  // // fclose(sbfile);
-  // u32 count = 0;
-  // double top_state_percentage = 0.001;
+    if (rand_below(afl, 100) < 100) {
+      /* --- New State-Based Favoring Logic --- */
+      //ACTF("Attempting state-based queue culling.");
   
-  // state_info_t **top_states =
-  //       get_top_states(&afl->fsrv, top_state_percentage, &count);
-  // fprintf(sbfile,"no.top states gotten:%d\n", count);
-  // for(u32 i = 0; i < count; i++) {
-  //     fprintf(sbfile,"top states index:%d, score: %.10f\n", top_states[i]->state_id, top_states[i]->total_score);
-  //   }
-  // fclose(sbfile);
+      if (!afl->fsrv.state_info) {
+        WARNF("State-based culling skipped: state_info not initialized.");
+        return;
+      }
   
-
-  if (rand_below(afl, 100) < 100) {
-    if (likely(!afl->score_changed || afl->non_instrumented_mode)) { return; }
-    
-    u32 len = (afl->fsrv.map_size >> 3);
-    u32 i;
-    u8 *temp_v = afl->map_tmp_buf;
-
-    afl->score_changed = 0;
-
-    memset(temp_v, 255, len);
-
-    afl->queued_favored = 0;
-    afl->pending_favored = 0;
-
-    for (i = 0; i < afl->queued_items; i++) {
-
-      afl->queue_buf[i]->favored = 0;
-
-    }
-
-    /* Let's see if anything in the bitmap isn't captured in temp_v.
-      If yes, and if it has a afl->top_rated[] contender, let's use it. */
-
-    afl->smallest_favored = -1;
-
-    for (i = 0; i < afl->fsrv.map_size; ++i) {
-
-      if (afl->top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7))) &&
-          afl->top_rated[i]->trace_mini) {
-
-        u32 j = len;
-
-        /* Remove all bits belonging to the current entry from temp_v. */
-
-        while (j--) {
-
-          if (afl->top_rated[i]->trace_mini[j]) {
-
-            temp_v[j] &= ~afl->top_rated[i]->trace_mini[j];
-
+      u32 top_states_count = 0;
+      // Define the percentage of top states to consider (e.g., 0.3% == 0.003)
+      double top_state_percentage = 0.003; // Consider making this configurable
+  
+      // get_top_states should return a ck_alloc'd array of state_info_t*
+      state_info_t **top_states =
+          get_top_states(&afl->fsrv, top_state_percentage, &top_states_count);
+  
+      // Debugging output (can be removed or put behind #ifdef DEBUG)
+      /*
+      FILE *sbfile = fopen("topstates_debug.txt","a");
+      if (sbfile) {
+          fprintf(sbfile,"State-based culling: Found %u top states (target percentage: %f)\n", top_states_count, top_state_percentage);
+          for(u32 i = 0; i < top_states_count; i++) {
+              if (top_states[i]) {
+                   fprintf(sbfile,"Top state ID: %u, score: %.10f, seed heap size: %u\n",
+                      top_states[i]->state_id,
+                      top_states[i]->total_score,
+                      top_states[i]->heap_size);
+                  if (top_states[i]->heap_size > 0) {
+                      fprintf(sbfile, "  Best seed for this state: ID %u, Score in state: %.10f\n",
+                          top_states[i]->top_seeds[0].queue_id, // Assuming queue_id field
+                          top_states[i]->top_seeds[0].score);
+                  }
+              }
           }
-
-        }
-
-        if (!afl->top_rated[i]->favored) {
-
-          afl->top_rated[i]->favored = 1;
-          ++afl->queued_favored;
-
-          if (!afl->top_rated[i]->was_fuzzed) {
-
-            ++afl->pending_favored;
-            if (unlikely(afl->smallest_favored < 0)) {
-
-              afl->smallest_favored = (s64)afl->top_rated[i]->id;
-
+          fclose(sbfile);
+      }
+      */
+  
+  
+      // Reset favored status for all queue entries *before* applying new logic
+      for (u32 i = 0; i < afl->queued_items; i++) {
+        if (afl->queue_buf[i]) { afl->queue_buf[i]->favored = 0; }
+      }
+      afl->queued_favored = 0;  // Reset counter
+      afl->pending_favored = 0;
+      afl->smallest_favored = -1; // Reset smallest
+  
+      if (!top_states || top_states_count == 0) {
+        WARNF("State-based culling: No top states found or allocation failed.");
+        if (top_states) ck_free(top_states); // Free if allocated but count is 0
+        // No changes to favoring, so no need to reinit table or mark redundant yet.
+        // Consider if we should fall back to original culling here.
+        // For now, if state-based culling is chosen but finds nothing, it does nothing.
+        return;
+      }
+  
+      // Estimate max possible seeds to favor.
+      // If we take one best seed per top state.
+      u32 max_possible_favored_seeds = top_states_count;
+      u32 *favored_seed_ids = (u32 *)ck_alloc(sizeof(u32) * max_possible_favored_seeds);
+      // ck_alloc PFATALs on failure, no need to check favored_seed_ids for NULL
+  
+      u32 actual_favored_count = 0;
+  
+      // Collect the best seed(s) from each top state
+      for (u32 i = 0; i < top_states_count; i++) {
+        state_info_t *current_state = top_states[i];
+  
+        // Check if the seed heap for this state has entries and current_state is valid
+        if (current_state && current_state->heap_size > 0) {
+          // Favor only the single best seed (root of the seed max-heap)
+          // Assuming seed_entry_t has 'queue_id' and 'score'
+          u32 best_seed_id = current_state->top_seeds[0].seed_id;
+  
+          // Prevent adding duplicate seed IDs to our favored list
+          u8  already_added = 0;
+          for (u32 k = 0; k < actual_favored_count; ++k) {
+            if (favored_seed_ids[k] == best_seed_id) {
+              already_added = 1;
+              break;
             }
-
           }
-
-        }
-
-      }
-
-    }
-
-    for (i = 0; i < afl->queued_items; i++) {
-
-      if (likely(!afl->queue_buf[i]->disabled)) {
-
-        mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
-
-      }
-
-    }
-
-    afl->reinit_table = 1;
-  }
-  else {
-
-    /* --- New State-Based Favoring Logic --- */
-    if (!afl->fsrv.state_info) return; // Need state info to be initialized
-
-    u32 count = 0;
-    // Define the percentage of top states to consider (e.g., 10%)
-    double top_state_percentage = 0.003;
-    state_info_t **top_states =
-        get_top_states(&afl->fsrv, top_state_percentage, &count);
-      
-    //printf("top state count: %d", count);
-    //printf("best state score: %lld",top_states[0]->total_score);
-    // Reset favored status for all queue entries *before* applying new logic
-    for (int i = 0; i < afl->queued_items; i++) {
-
-      if (afl->queue_buf[i]) { afl->queue_buf[i]->favored = 0; }
-
-    }
-
-    afl->queued_favored = 0;  // Reset counter
-    afl->pending_favored = 0;
-    afl->smallest_favored = -1; // Reset smallest
-
-    if (!top_states || count == 0) {
-      // Fallback or skip if state selection yields nothing
-      ACTF("State-based culling skipped: No top states found or alloc failed.");
-      if (top_states) ck_free(top_states);
-      // We didn't change favoring, so no need to reinit table or mark redundant
-      return;
-    }
-
-    // Estimate max possible seeds to favor and allocate ID array
-    // We take at most 1 seed per top state now.
-    u32 max_possible_seeds = count;
-    u32 *favored_seed_ids = (u32 *)ck_alloc(sizeof(u32) * max_possible_seeds);
-    if (!favored_seed_ids) {          // Should not happen with ck_alloc
-      ck_free(top_states);
-      PFATAL("Failed to allocate memory for favored_seed_ids");
-    }
-
-    u32 favored_count = 0;
-
-    // Collect the best seed(s) from each top state
-    for (int i = 0; i < count; i++) {
-
-      state_info_t *current_state = top_states[i];
-
-      // Check if the seed heap for this state has entries
-      if (current_state && current_state->heap_size > 0) {
-
-        // Favor only the single best seed (root of the seed max-heap)
-        u32 best_seed_id = current_state->top_seeds[0].seed_id;
-
-        // Optional: Prevent adding duplicate seed IDs
-        u8  already_added = 0;
-        u32 k;
-        for (k = 0; k < favored_count; ++k) {
-
-          if (favored_seed_ids[k] == best_seed_id) {
-
-            already_added = 1;
-            break;
-
+  
+          if (!already_added && actual_favored_count < max_possible_favored_seeds) {
+            favored_seed_ids[actual_favored_count++] = best_seed_id;
           }
-
         }
-
-        if (!already_added && favored_count < max_possible_seeds) {
-
-          favored_seed_ids[favored_count++] = best_seed_id;
-
-        }
-
       }
-
-    }
-
-    ck_free(top_states);  // Free the array of pointers
-
-    // Mark the selected seeds as favored by iterating through the actual queue
-    u32 queue_idx;
-    for (int i = 0; i < favored_count; i++) {
-
-      u32               target_id = favored_seed_ids[i];
-      struct queue_entry *q_found = NULL;
-
-      // Find the queue entry by ID
-      for (queue_idx = 0; queue_idx < afl->queued_items; ++queue_idx) {
-
-        if (afl->queue_buf[queue_idx] &&
-            afl->queue_buf[queue_idx]->id == target_id) {
-
-          q_found = afl->queue_buf[queue_idx];
-          break;  // Found the entry
-
+      ck_free(top_states);  // Free the array of pointers returned by get_top_states
+  
+      // Mark the collected unique seeds as favored by iterating through the actual queue
+      for (u32 i = 0; i < actual_favored_count; i++) {
+        u32 target_id = favored_seed_ids[i];
+        struct queue_entry *q_found = NULL;
+  
+        // Find the queue entry by ID
+        for (u32 queue_idx = 0; queue_idx < afl->queued_items; ++queue_idx) {
+          if (afl->queue_buf[queue_idx] &&
+              afl->queue_buf[queue_idx]->id == target_id) {
+            q_found = afl->queue_buf[queue_idx];
+            break;  // Found the entry
+          }
         }
-
-      }
-
-      if (q_found) {
-
-        if (!q_found->favored && !q_found->disabled) {
-
-          q_found->favored = 1;
-          afl->queued_favored++;
-          if (!q_found->was_fuzzed) {
-
-            ++afl->pending_favored;
-            // Correctly update smallest_favored if this logic is used later
-            if (unlikely(afl->smallest_favored < 0) ||
-                q_found->id < (u32)afl->smallest_favored) {
-
-              afl->smallest_favored = (s64)q_found->id;
-
+  
+        if (q_found) {
+          if (!q_found->favored && !q_found->disabled) { // Check if not already favored and not disabled
+            q_found->favored = 1;
+            afl->queued_favored++;
+            if (!q_found->was_fuzzed) {
+              ++afl->pending_favored;
+              if (unlikely(afl->smallest_favored < 0) ||
+                  q_found->id < (u32)afl->smallest_favored) {
+                afl->smallest_favored = (s64)q_found->id;
+              }
             }
-
           }
-
+        } else {
+           // WARNF("State-favored seed ID %u not found in current queue!", target_id);
         }
-
       }
-      // else { WARNF("Favored seed ID %u not found in current queue!",
-      // target_id); }
-
-    }
-
-    ck_free(favored_seed_ids);  // Free the temporary ID array
-
-    // Mark entries not favored in this pass as redundant
-    for (int i = 0; i < afl->queued_items; i++) {
-
-      if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
-
-        mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
-
+      ck_free(favored_seed_ids);  // Free the temporary ID array
+  
+      // Mark entries not favored in this pass as redundant
+      for (u32 i = 0; i < afl->queued_items; i++) {
+        if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
+          mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
+        }
       }
-
+  
+      if (actual_favored_count > 0 || afl->queued_favored > 0) { // If any changes to favored status
+          afl->score_changed = 1; // Indicate that scores/favored status changed
+      }
+      afl->reinit_table = 1;  // Signal alias table rebuild needed due to potential changes in favored status
+  
+      //OKF("State-based culling resulted in %u unique seeds favored.", actual_favored_count);
+  
+    } else {
+      /* --- Original AFL++ Bitmap-Based Culling Logic --- */
+      //ACTF("Attempting original bitmap-based queue culling.");
+  
+      if (likely(!afl->score_changed || afl->non_instrumented_mode)) { return; }
+  
+      u32 len = (afl->fsrv.map_size >> 3); // map_size is in bytes, len is in u64 blocks for trace_mini
+      u32 i;
+      u8 *temp_v = afl->map_tmp_buf; // Temporary buffer for bitmap operations
+  
+      afl->score_changed = 0; // Reset flag, will be set if culling makes changes
+  
+      memset(temp_v, 255, len); // Initialize temp_v to all 1s
+  
+      afl->queued_favored = 0;  // Reset counters
+      afl->pending_favored = 0;
+  
+      // Initially, mark all queue entries as not favored
+      for (i = 0; i < afl->queued_items; i++) {
+        if (afl->queue_buf[i]) { // Ensure entry exists
+            afl->queue_buf[i]->favored = 0;
+        }
+      }
+  
+      /* Let's see if anything in the bitmap isn't captured in temp_v.
+         If yes, and if it has a afl->top_rated[] contender, let's use it. */
+      afl->smallest_favored = -1; // Reset smallest favored ID
+  
+      for (i = 0; i < afl->fsrv.map_size; ++i) {
+        // If there's a top-rated seed for this bit, and this bit is still set in temp_v,
+        // and the seed has a minimized trace (trace_mini)
+        if (afl->top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7))) &&
+            afl->top_rated[i]->trace_mini) {
+  
+          u32 j = len; // Number of u64 blocks in trace_mini
+  
+          /* Remove all bits belonging to the current top_rated[i] entry from temp_v. */
+          while (j--) {
+            if (afl->top_rated[i]->trace_mini[j]) { // If this block of trace_mini has bits
+              temp_v[j] &= ~afl->top_rated[i]->trace_mini[j]; // Clear these bits in temp_v
+            }
+          }
+  
+          // If this seed wasn't already marked favored in this culling pass
+          if (!afl->top_rated[i]->favored) {
+            afl->top_rated[i]->favored = 1; // Mark as favored
+            ++afl->queued_favored;          // Increment count of favored seeds
+  
+            if (!afl->top_rated[i]->was_fuzzed) { // If it hasn't been fuzzed yet
+              ++afl->pending_favored; // Increment count of pending favored seeds
+              if (unlikely(afl->smallest_favored < 0) || afl->top_rated[i]->id < (u32)afl->smallest_favored) {
+                 afl->smallest_favored = (s64)afl->top_rated[i]->id; // Update smallest favored ID
+              }
+            }
+          }
+        }
+      }
+  
+      // Mark entries not favored in this pass as redundant
+      for (i = 0; i < afl->queued_items; i++) {
+        if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
+          mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
+        }
+      }
+      afl->reinit_table = 1; // Signal that the alias table needs rebuilding
     }
-
-    afl->reinit_table = 1;  // Signal alias table rebuild needed
-
   }
-}
+  
+// void cull_queue(afl_state_t *afl) {
+
+//   // If score_changed is not set (meaning no new paths found recently by anyone)
+//   // or if in non_instrumented_mode, the original culling logic might skip.
+//   // We can decide if state-based culling should run regardless or also depend on this.
+//   // For now, let's make the choice between strategies primary.
+
+//   if (rand_below(afl, 100) < STATE_BASED_CULLING_PROB) {
+//     /* --- New State-Based Favoring Logic --- */
+//     ACTF("Attempting state-based queue culling.");
+
+//     if (!afl->fsrv.state_info) {
+//       WARNF("State-based culling skipped: state_info not initialized.");
+//       return;
+//     }
+
+//     u32 top_states_count = 0;
+//     // Define the percentage of top states to consider (e.g., 0.3% == 0.003)
+//     double top_state_percentage = 0.003; // Consider making this configurable
+
+//     // get_top_states should return a ck_alloc'd array of state_info_t*
+//     state_info_t **top_states =
+//         get_top_states(&afl->fsrv, top_state_percentage, &top_states_count);
+
+//     // Debugging output (can be removed or put behind #ifdef DEBUG)
+//     /*
+//     FILE *sbfile = fopen("topstates_debug.txt","a");
+//     if (sbfile) {
+//         fprintf(sbfile,"State-based culling: Found %u top states (target percentage: %f)\n", top_states_count, top_state_percentage);
+//         for(u32 i = 0; i < top_states_count; i++) {
+//             if (top_states[i]) {
+//                  fprintf(sbfile,"Top state ID: %u, score: %.10f, seed heap size: %u\n",
+//                     top_states[i]->state_id,
+//                     top_states[i]->total_score,
+//                     top_states[i]->heap_size);
+//                 if (top_states[i]->heap_size > 0) {
+//                     fprintf(sbfile, "  Best seed for this state: ID %u, Score in state: %.10f\n",
+//                         top_states[i]->top_seeds[0].queue_id, // Assuming queue_id field
+//                         top_states[i]->top_seeds[0].score);
+//                 }
+//             }
+//         }
+//         fclose(sbfile);
+//     }
+//     */
+
+
+//     // Reset favored status for all queue entries *before* applying new logic
+//     for (u32 i = 0; i < afl->queued_items; i++) {
+//       if (afl->queue_buf[i]) { afl->queue_buf[i]->favored = 0; }
+//     }
+//     afl->queued_favored = 0;  // Reset counter
+//     afl->pending_favored = 0;
+//     afl->smallest_favored = -1; // Reset smallest
+
+//     if (!top_states || top_states_count == 0) {
+//       WARNF("State-based culling: No top states found or allocation failed.");
+//       if (top_states) ck_free(top_states); // Free if allocated but count is 0
+//       // No changes to favoring, so no need to reinit table or mark redundant yet.
+//       // Consider if we should fall back to original culling here.
+//       // For now, if state-based culling is chosen but finds nothing, it does nothing.
+//       return;
+//     }
+
+//     // Estimate max possible seeds to favor.
+//     // If we take one best seed per top state.
+//     u32 max_possible_favored_seeds = top_states_count;
+//     u32 *favored_seed_ids = (u32 *)ck_alloc(sizeof(u32) * max_possible_favored_seeds);
+//     // ck_alloc PFATALs on failure, no need to check favored_seed_ids for NULL
+
+//     u32 actual_favored_count = 0;
+
+//     // Collect the best seed(s) from each top state
+//     for (u32 i = 0; i < top_states_count; i++) {
+//       state_info_t *current_state = top_states[i];
+
+//       // Check if the seed heap for this state has entries and current_state is valid
+//       if (current_state && current_state->heap_size > 0) {
+//         // Favor only the single best seed (root of the seed max-heap)
+//         // Assuming seed_entry_t has 'queue_id' and 'score'
+//         u32 best_seed_id = current_state->top_seeds[0].queue_id;
+
+//         // Prevent adding duplicate seed IDs to our favored list
+//         u8  already_added = 0;
+//         for (u32 k = 0; k < actual_favored_count; ++k) {
+//           if (favored_seed_ids[k] == best_seed_id) {
+//             already_added = 1;
+//             break;
+//           }
+//         }
+
+//         if (!already_added && actual_favored_count < max_possible_favored_seeds) {
+//           favored_seed_ids[actual_favored_count++] = best_seed_id;
+//         }
+//       }
+//     }
+//     ck_free(top_states);  // Free the array of pointers returned by get_top_states
+
+//     // Mark the collected unique seeds as favored by iterating through the actual queue
+//     for (u32 i = 0; i < actual_favored_count; i++) {
+//       u32 target_id = favored_seed_ids[i];
+//       struct queue_entry *q_found = NULL;
+
+//       // Find the queue entry by ID
+//       for (u32 queue_idx = 0; queue_idx < afl->queued_items; ++queue_idx) {
+//         if (afl->queue_buf[queue_idx] &&
+//             afl->queue_buf[queue_idx]->id == target_id) {
+//           q_found = afl->queue_buf[queue_idx];
+//           break;  // Found the entry
+//         }
+//       }
+
+//       if (q_found) {
+//         if (!q_found->favored && !q_found->disabled) { // Check if not already favored and not disabled
+//           q_found->favored = 1;
+//           afl->queued_favored++;
+//           if (!q_found->was_fuzzed) {
+//             ++afl->pending_favored;
+//             if (unlikely(afl->smallest_favored < 0) ||
+//                 q_found->id < (u32)afl->smallest_favored) {
+//               afl->smallest_favored = (s64)q_found->id;
+//             }
+//           }
+//         }
+//       } else {
+//          // WARNF("State-favored seed ID %u not found in current queue!", target_id);
+//       }
+//     }
+//     ck_free(favored_seed_ids);  // Free the temporary ID array
+
+//     // Mark entries not favored in this pass as redundant
+//     for (u32 i = 0; i < afl->queued_items; i++) {
+//       if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
+//         mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
+//       }
+//     }
+
+//     if (actual_favored_count > 0 || afl->queued_favored > 0) { // If any changes to favored status
+//         afl->score_changed = 1; // Indicate that scores/favored status changed
+//     }
+//     afl->reinit_table = 1;  // Signal alias table rebuild needed due to potential changes in favored status
+
+//     OKF("State-based culling resulted in %u unique seeds favored.", actual_favored_count);
+
+//   } else {
+//     /* --- Original AFL++ Bitmap-Based Culling Logic --- */
+//     ACTF("Attempting original bitmap-based queue culling.");
+
+//     if (likely(!afl->score_changed || afl->non_instrumented_mode)) { return; }
+
+//     u32 len = (afl->fsrv.map_size >> 3); // map_size is in bytes, len is in u64 blocks for trace_mini
+//     u32 i;
+//     u8 *temp_v = afl->map_tmp_buf; // Temporary buffer for bitmap operations
+
+//     afl->score_changed = 0; // Reset flag, will be set if culling makes changes
+
+//     memset(temp_v, 255, len); // Initialize temp_v to all 1s
+
+//     afl->queued_favored = 0;  // Reset counters
+//     afl->pending_favored = 0;
+
+//     // Initially, mark all queue entries as not favored
+//     for (i = 0; i < afl->queued_items; i++) {
+//       if (afl->queue_buf[i]) { // Ensure entry exists
+//           afl->queue_buf[i]->favored = 0;
+//       }
+//     }
+
+//     /* Let's see if anything in the bitmap isn't captured in temp_v.
+//        If yes, and if it has a afl->top_rated[] contender, let's use it. */
+//     afl->smallest_favored = -1; // Reset smallest favored ID
+
+//     for (i = 0; i < afl->fsrv.map_size; ++i) {
+//       // If there's a top-rated seed for this bit, and this bit is still set in temp_v,
+//       // and the seed has a minimized trace (trace_mini)
+//       if (afl->top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7))) &&
+//           afl->top_rated[i]->trace_mini) {
+
+//         u32 j = len; // Number of u64 blocks in trace_mini
+
+//         /* Remove all bits belonging to the current top_rated[i] entry from temp_v. */
+//         while (j--) {
+//           if (afl->top_rated[i]->trace_mini[j]) { // If this block of trace_mini has bits
+//             temp_v[j] &= ~afl->top_rated[i]->trace_mini[j]; // Clear these bits in temp_v
+//           }
+//         }
+
+//         // If this seed wasn't already marked favored in this culling pass
+//         if (!afl->top_rated[i]->favored) {
+//           afl->top_rated[i]->favored = 1; // Mark as favored
+//           ++afl->queued_favored;          // Increment count of favored seeds
+
+//           if (!afl->top_rated[i]->was_fuzzed) { // If it hasn't been fuzzed yet
+//             ++afl->pending_favored; // Increment count of pending favored seeds
+//             if (unlikely(afl->smallest_favored < 0) || afl->top_rated[i]->id < (u32)afl->smallest_favored) {
+//                afl->smallest_favored = (s64)afl->top_rated[i]->id; // Update smallest favored ID
+//             }
+//           }
+//         }
+//       }
+//     }
+
+//     // Mark entries not favored in this pass as redundant
+//     for (i = 0; i < afl->queued_items; i++) {
+//       if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
+//         mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
+//       }
+//     }
+//     afl->reinit_table = 1; // Signal that the alias table needs rebuilding
+//   }
+// }
 
 /* Calculate case desirability score to adjust the length of havoc fuzzing.
    A helper function for fuzz_one(). Maybe some of these constants should

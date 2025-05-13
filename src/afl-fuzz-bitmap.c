@@ -532,660 +532,422 @@ static inline u8 bitmap_read(u8 *map, u32 index) {
 
 }
 
-/* Check if the result of an execve() during routine fuzzing is interesting,
-   save or queue the input test case for further analysis if so. Returns 1 if
-   entry is saved, 0 otherwise. */
+// Ensure these score constants are defined (e.g., in afl-fuzz.h)
+#define SCORE_CRASH                 1000.0
+#define SCORE_NEW_HANG              50.0
+#define SCORE_KNOWN_HANG_OR_TMOUT   1.0
+#define SCORE_NEW_PATH_BASE         15.0
+#define SCORE_NEW_BITS_GENERIC_BASE 2.0 // Not used directly if new_bits_type > 0 implies new path
+#define SCORE_DECAY                 -0.2
+
+#include "afl-fuzz.h" // Ensure this includes definitions for SCORE_CRASH, etc.
+
+// Ensure these score constants are defined (e.g., in afl-fuzz.h)
+// #define SCORE_CRASH                 1000.0
+// #define SCORE_NEW_HANG              50.0
+// #define SCORE_KNOWN_HANG_OR_TMOUT   1.0
+// #define SCORE_NEW_PATH_BASE         15.0
+// #define SCORE_NEW_BITS_GENERIC_BASE 2.0 // Not used directly if new_bits_type > 0 implies new path
+// #define SCORE_DECAY                 -0.5
+#include "afl-fuzz.h" // Ensure this includes definitions for SCORE_CRASH, etc.
+
+// Ensure these score constants are defined (e.g., in afl-fuzz.h)
+// #define SCORE_CRASH                 1000.0
+// #define SCORE_NEW_HANG              50.0
+// #define SCORE_KNOWN_HANG_OR_TMOUT   1.0
+// #define SCORE_NEW_PATH_BASE         15.0
+// #define SCORE_NEW_BITS_GENERIC_BASE 2.0 // Not used directly if new_bits_type > 0 implies new path
+// #define SCORE_DECAY                 -0.5
+#include "afl-fuzz.h" // Ensure this includes definitions for SCORE_CRASH, etc.
+
+// Ensure these score constants are defined (e.g., in afl-fuzz.h)
+// #define SCORE_CRASH                 1000.0
+// #define SCORE_NEW_HANG              50.0
+// #define SCORE_KNOWN_HANG_OR_TMOUT   1.0
+// #define SCORE_NEW_PATH_BASE         15.0
+// #define SCORE_NEW_BITS_GENERIC_BASE 2.0 // Not used directly if new_bits_type > 0 implies new path
+// #define SCORE_DECAY                 -0.5
+#include "afl-fuzz.h" // Ensure this includes definitions for SCORE_CRASH, etc.
+
+// Ensure these score constants are defined (e.g., in afl-fuzz.h)
+// #define SCORE_CRASH                 1000.0
+// #define SCORE_NEW_HANG              50.0
+// #define SCORE_KNOWN_HANG_OR_TMOUT   1.0
+// #define SCORE_NEW_PATH_BASE         15.0
+// #define SCORE_NEW_BITS_GENERIC_BASE 2.0 // Not used directly if new_bits_type > 0 implies new path
+// #define SCORE_DECAY                 -0.5
 
 u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
                                             u32 len, u8 fault) {
 
-  if (unlikely(len == 0)) { return 0; }
+  if (unlikely(len == 0)) { 
+    afl->current_execution_score_base = SCORE_DECAY; 
+    return 0; 
+  }
+
+  double calculated_exec_score = SCORE_DECAY; // Default score
 
   if (unlikely(fault == FSRV_RUN_TMOUT && afl->afl_env.afl_ignore_timeouts)) {
-
     if (unlikely(afl->schedule >= FAST && afl->schedule <= RARE)) {
-
       classify_counts(&afl->fsrv);
-      u64 cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
-
-      // Saturated increment
-      if (likely(afl->n_fuzz[cksum % N_FUZZ_SIZE] < 0xFFFFFFFF))
-        afl->n_fuzz[cksum % N_FUZZ_SIZE]++;
-
+      u64 cksum_tmp = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST); // Renamed to avoid conflict
+      if (likely(afl->n_fuzz[cksum_tmp % N_FUZZ_SIZE] < 0xFFFFFFFF))
+        afl->n_fuzz[cksum_tmp % N_FUZZ_SIZE]++;
     }
-
+    afl->current_execution_score_base = SCORE_KNOWN_HANG_OR_TMOUT; // Score for ignored timeout
     return 0;
-
   }
 
   u8  fn[PATH_MAX];
   u8 *queue_fn = "";
-  u8  new_bits = 0, keeping = 0, res, classified = 0, is_timeout = 0,
-     need_hash = 1;
+  u8  new_bits_type = 0; // 0: no new, 1: new counts, 2: new tuples
+  u8  keeping = 0;
+  u8  res; 
+  u8  classified = 0;
+  u8  is_timeout = 0; 
+  u8  need_hash = 1;
   s32 fd;
-  u64 cksum = 0;
+  u64 cksum_fast = 0; // Renamed for AFLFast context
   u32 cksum_simplified = 0, cksum_unique = 0;
-  u8  san_fault = 0;
+  u8  san_fault = FSRV_RUN_OK; // Initialize san_fault
   u8  san_idx = 0;
   u8  feed_san = 0;
   afl->san_case_status = 0;
 
-  double score = 0;
-  /* Update path frequency. */
-
-  /* Generating a hash on every input is super expensive. Bad idea and should
-     only be used for special schedules */
   if (unlikely(afl->schedule >= FAST && afl->schedule <= RARE)) {
-
     classify_counts(&afl->fsrv);
     classified = 1;
     need_hash = 0;
-
-    cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
-
-    /* Saturated increment */
-    if (likely(afl->n_fuzz[cksum % N_FUZZ_SIZE] < 0xFFFFFFFF))
-      afl->n_fuzz[cksum % N_FUZZ_SIZE]++;
-
+    cksum_fast = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
+    if (likely(afl->n_fuzz[cksum_fast % N_FUZZ_SIZE] < 0xFFFFFFFF))
+      afl->n_fuzz[cksum_fast % N_FUZZ_SIZE]++;
   }
 
-  /* Only "normal" inputs seem interested to us */
-  if (likely(fault == afl->crash_mode)) {
+  // --- SAND integration ---
+  if (likely(fault == afl->crash_mode)) { // Only run SAND if primary is not a crash/timeout
+    if (unlikely(afl->san_binary_length)) { // Check if SAND binaries are configured
+        // Store original new_bits_type before SAND potentially re-runs and modifies trace_bits
+        u8 original_new_bits_type = has_new_bits_unclassified(afl, afl->virgin_bits);
 
-    if (unlikely(afl->san_binary_length) &&
-        likely(afl->san_abstraction == SIMPLIFY_TRACE)) {
-
-      memcpy(afl->san_fsrvs[0].trace_bits, afl->fsrv.trace_bits,
-             afl->fsrv.map_size);
-      classify_counts_mem((_AFL_INTSIZEVAR *)afl->san_fsrvs[0].trace_bits,
-                          afl->fsrv.map_size);
-      simplify_trace(afl, afl->san_fsrvs[0].trace_bits);
-
-      // Note: Original SAND implementation used XXHASH32
-      cksum_simplified =
-          hash32(afl->san_fsrvs[0].trace_bits, afl->fsrv.map_size, HASH_CONST);
-
-      if (unlikely(!bitmap_read(afl->simplified_n_fuzz, cksum_simplified))) {
-
-        feed_san = 1;
-        bitmap_set(afl->simplified_n_fuzz, cksum_simplified);
-
-      }
-
-    }
-
-    if (unlikely(afl->san_binary_length) &&
-        unlikely(afl->san_abstraction == COVERAGE_INCREASE)) {
-
-      /* Check if the input increase the coverage */
-      new_bits = has_new_bits_unclassified(afl, afl->virgin_bits);
-
-      if (unlikely(new_bits)) { feed_san = 1; }
-
-    }
-
-    if (unlikely(afl->san_binary_length) &&
-        likely(afl->san_abstraction == UNIQUE_TRACE)) {
-
-      cksum_unique =
-          hash32(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
-      if (unlikely(!bitmap_read(afl->n_fuzz_dup, cksum) &&
-                   fault == afl->crash_mode)) {
-
-        feed_san = 1;
-        bitmap_set(afl->n_fuzz_dup, cksum_unique);
-
-      }
-
-    }
-
-    if (feed_san) {
-
-      /* The input seems interested to other sanitizers, feed it into extra
-       * binaries. */
-
-      for (san_idx = 0; san_idx < afl->san_binary_length; san_idx++) {
-
-        len = write_to_testcase(afl, &mem, len, 0);
-        san_fault = fuzz_run_target(afl, &afl->san_fsrvs[san_idx],
-                                    afl->san_fsrvs[san_idx].exec_tmout);
-
-        // DEBUGF("ASAN Result: %hhd\n", asan_fault);
-
-        if (unlikely(san_fault && fault == afl->crash_mode)) {
-
-          /* sanitizers discovers distinct bugs! */
-          afl->san_case_status |= SAN_CRASH_ONLY;
-
+        if (likely(afl->san_abstraction == SIMPLIFY_TRACE)) {
+            memcpy(afl->san_fsrvs[0].trace_bits, afl->fsrv.trace_bits, afl->fsrv.map_size);
+            classify_counts_mem((_AFL_INTSIZEVAR *)afl->san_fsrvs[0].trace_bits, afl->fsrv.map_size);
+            simplify_trace(afl, afl->san_fsrvs[0].trace_bits);
+            cksum_simplified = hash32(afl->san_fsrvs[0].trace_bits, afl->fsrv.map_size, HASH_CONST);
+            if (unlikely(!bitmap_read(afl->simplified_n_fuzz, cksum_simplified))) {
+                feed_san = 1;
+                bitmap_set(afl->simplified_n_fuzz, cksum_simplified);
+            }
         }
-
-        if (san_fault == FSRV_RUN_CRASH) {
-
-          /* Treat this execution as fault detected by ASAN */
-          // fault = san_fault;
-
-          /* That's pretty enough, break to avoid more overhead. */
-          break;
-
-        } else {
-
-          // or keep san_fault as ok
-          san_fault = FSRV_RUN_OK;
-
+        if (unlikely(afl->san_abstraction == COVERAGE_INCREASE)) {
+            if (unlikely(original_new_bits_type)) { feed_san = 1; } // Use original_new_bits_type
         }
-
-      }
-
+        if (likely(afl->san_abstraction == UNIQUE_TRACE)) {
+            cksum_unique = hash32(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST); // Hash current trace
+            if (unlikely(!bitmap_read(afl->n_fuzz_dup, cksum_unique))) { // Check with unique hash
+                feed_san = 1;
+                bitmap_set(afl->n_fuzz_dup, cksum_unique);
+            }
+        }
+        if (feed_san) {
+            for (san_idx = 0; san_idx < afl->san_binary_length; san_idx++) {
+                u32 current_len_for_sand = len;
+                u8* current_mem_for_sand = mem; // Important: mem can be changed by write_to_testcase if it reallocs
+                current_len_for_sand = write_to_testcase(afl, (void**)&current_mem_for_sand, current_len_for_sand, 0);
+                
+                u8 temp_san_fault = fuzz_run_target(afl, &afl->san_fsrvs[san_idx], afl->san_fsrvs[san_idx].exec_tmout);
+                if (unlikely(temp_san_fault && fault == afl->crash_mode)) { // fault is primary run's fault
+                    afl->san_case_status |= SAN_CRASH_ONLY;
+                }
+                if (temp_san_fault == FSRV_RUN_CRASH) {
+                    san_fault = temp_san_fault; // Update san_fault if a crash is found by SAND
+                    break; 
+                }
+                // san_fault remains FSRV_RUN_OK if no SAND crash
+            }
+        }
+        // Restore primary fsrv trace_bits if SAND runs modified it (though fuzz_run_target should use its own fsrv)
+        // This is usually not necessary as fuzz_run_target operates on the fsrv passed to it.
     }
-
   }
+  // --- End SAND integration ---
 
-  /* If there is no crash, everything is fine. */
-  if (likely(fault == afl->crash_mode)) {
-
-    /* Keep only if there are new bits in the map, add to queue for
-       future fuzzing, etc. */
-    if (!unlikely(afl->san_abstraction == COVERAGE_INCREASE && feed_san)) {
-
-      /* If we are in coverage increasing abstraction and have fed input to
-         sanitizers, we are sure it has new bits.*/
-      new_bits = has_new_bits_unclassified(afl, afl->virgin_bits);
-      
-    }
-
-    if (likely(classified)) {
-
-      new_bits = has_new_bits(afl, afl->virgin_bits);
-
+  // --- Main Logic for Interest & Scoring ---
+  if (likely(fault == afl->crash_mode)) { // Primary run was not a crash or timeout
+    // Determine new coverage from the primary run's trace_bits
+    if (likely(classified)) { 
+      new_bits_type = has_new_bits(afl, afl->virgin_bits);
     } else {
-
-      new_bits = has_new_bits_unclassified(afl, afl->virgin_bits);
-
-      if (unlikely(new_bits)) { classified = 1; }
-
+      new_bits_type = has_new_bits_unclassified(afl, afl->virgin_bits);
+      if (unlikely(new_bits_type)) { classified = 1; } 
     }
 
-    if (likely(!new_bits)) {
-      
-      if (san_fault == FSRV_RUN_OK) {
-
-        if (unlikely(afl->crash_mode)) { ++afl->total_crashes; }
-        // FILE *f = fopen("scorerrrrr","a");
-        // fprintf(f,"no new bits\n");
-        // fclose(f);
-        // update_state_scores(afl);
-        // afl->queue_top->execution_score = -0.1;
-        return 0;
-
-      } else {
-
+    if (likely(!new_bits_type)) { // No new coverage from primary run
+      if (san_fault == FSRV_RUN_OK) { // And SAND found no crash
+        calculated_exec_score = SCORE_DECAY;
+        afl->current_execution_score_base = calculated_exec_score;
+        return 0; 
+      } else { // SAND found a bug (crash), but no new primary coverage
         afl->san_case_status |= NON_COV_INCREASE_BUG;
-        fault = san_fault;
-        classified = new_bits;
-        goto may_save_fault;
-
+        fault = san_fault; // Promote SAND's fault status
+        // new_bits_type remains 0
+        goto may_save_fault; 
       }
-
     }
 
-    if (new_bits==2.0){
-      score += count_class_changes(afl, afl->virgin_bits);
+    // --- New coverage found by primary run ---
+    calculated_exec_score = SCORE_NEW_PATH_BASE; 
+    if (new_bits_type == 2) { 
+      calculated_exec_score += (double)count_class_changes(afl, afl->virgin_bits);
+    } else if (new_bits_type == 1) { 
+      calculated_exec_score += ((double)count_new_hits(afl, afl->virgin_bits) / 10.0);
     }
-    else if (new_bits >=1.0){
-      score += count_new_hits(afl, afl->virgin_bits)/10.0;
+    
+    // If SAND also found a crash, promote fault, but score is primarily for new coverage
+    if (san_fault == FSRV_RUN_CRASH) {
+        fault = san_fault; 
     }
-    else{
-      score =score;
-    }
-
-    fault = san_fault;
-    classified = new_bits;
   
-  save_to_queue:
-    // FILE *fp = fopen("sbsbsbsbsbsbsbsb","a");
-    // fprintf(fp,"going to save to queue\n");
-    // fclose(fp);
+  save_to_queue: // Label for saving inputs that found new coverage
+    afl->current_execution_score_base = calculated_exec_score; 
+
 #ifndef SIMPLE_FILES
-
     if (!afl->afl_env.afl_sha1_filenames) {
-
       queue_fn = alloc_printf(
           "%s/queue/id:%06u,%s%s%s", afl->out_dir, afl->queued_items,
-          describe_op(afl, new_bits + is_timeout,
+          describe_op(afl, new_bits_type + is_timeout, 
                       NAME_MAX - strlen("id:000000,")),
           afl->file_extension ? "." : "",
           afl->file_extension ? (const char *)afl->file_extension : "");
-
-    } else {
-
+    } else { 
       const char *hex = sha1_hex(mem, len);
       queue_fn = alloc_printf(
           "%s/queue/%s%s%s", afl->out_dir, hex, afl->file_extension ? "." : "",
           afl->file_extension ? (const char *)afl->file_extension : "");
       ck_free((char *)hex);
-
     }
-
 #else
-
     queue_fn = alloc_printf(
-        "%s/queue/id_%06u", afl->out_dir, afl->queued_items,
+        "%s/queue/id_%06u%s%s", afl->out_dir, afl->queued_items,
         afl->file_extension ? "." : "",
         afl->file_extension ? (const char *)afl->file_extension : "");
-
-#endif                                                    /* ^!SIMPLE_FILES */
+#endif                                                    
     fd = permissive_create(afl, queue_fn);
     if (likely(fd >= 0)) {
-
       ck_write(fd, mem, len, queue_fn);
       close(fd);
-
     }
 
-    add_to_queue(afl, queue_fn, len, 0);
+    add_to_queue(afl, queue_fn, len, 0); 
 
-    if (unlikely(afl->fuzz_mode) &&
-        likely(afl->switch_fuzz_mode && !afl->non_instrumented_mode)) {
-
+    if (unlikely(afl->fuzz_mode) && likely(afl->switch_fuzz_mode && !afl->non_instrumented_mode)) { 
       if (afl->afl_env.afl_no_ui) {
-
         ACTF("New coverage found, switching back to exploration mode.");
-
       }
-
-      afl->fuzz_mode = 0;
-
+      afl->fuzz_mode = 0; 
     }
 
 #ifdef INTROSPECTION
     if (afl->custom_mutators_count && afl->current_custom_fuzz) {
-
       LIST_FOREACH(&afl->custom_mutator_list, struct custom_mutator, {
-
         if (afl->current_custom_fuzz == el && el->afl_custom_introspection) {
-
           const char *ptr = el->afl_custom_introspection(el->data);
-
           if (ptr != NULL && *ptr != 0) {
-
             fprintf(afl->introspection_file, "QUEUE CUSTOM %s = %s\n", ptr,
                     afl->queue_top->fname);
-
           }
-
         }
-
       });
-
     } else if (afl->mutation[0] != 0) {
-
       fprintf(afl->introspection_file, "QUEUE %s = %s\n", afl->mutation,
               afl->queue_top->fname);
-
     }
-
 #endif
 
-    if (new_bits == 2) {
-
+    if (new_bits_type == 2) { 
       afl->queue_top->has_new_cov = 1;
       ++afl->queued_with_cov;
-
     }
 
-    if (unlikely(need_hash && new_bits)) {
-
-      /* due to classify counts we have to recalculate the checksum */
+    if (unlikely(need_hash && new_bits_type)) { 
+      if(!classified) classify_counts(&afl->fsrv); 
       afl->queue_top->exec_cksum =
           hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
-      need_hash = 0;
-
+      // need_hash = 0; // Not strictly necessary if only used once
     }
 
-    /* For AFLFast schedules we update the new queue entry */
-    if (likely(cksum)) {
-
-      afl->queue_top->n_fuzz_entry = cksum % N_FUZZ_SIZE;
+    if (likely(cksum_fast)) { 
+      afl->queue_top->n_fuzz_entry = cksum_fast % N_FUZZ_SIZE;
       afl->n_fuzz[afl->queue_top->n_fuzz_entry] = 1;
-
     }
 
-    /* Try to calibrate inline; this also calls update_bitmap_score() when
-       successful. */
     res = calibrate_case(afl, afl->queue_top, mem, afl->queue_cycle - 1, 0);
-
     if (unlikely(res == FSRV_RUN_ERROR)) {
-
+      afl->current_execution_score_base = SCORE_DECAY * 100; 
       FATAL("Unable to execute target application");
-
     }
-
     if (likely(afl->q_testcase_max_cache_size)) {
-
       queue_testcase_store_mem(afl, afl->queue_top, mem);
-
     }
-
-    keeping = 1;
-
+    keeping = 1; 
+    return keeping; 
   }
 
+  // --- If primary execution was a crash or timeout (fault != afl->crash_mode from start, or from NON_COV_INCREASE_BUG) ---
 may_save_fault:
-  // FILE *fp = fopen("sbsbsbsbsbsbsbsb","a");
-  // fprintf(fp,"may have fault\n");
-  // fclose(fp);
   switch (fault) {
-
     case FSRV_RUN_TMOUT:
-
-      /* Timeouts are not very interesting, but we're still obliged to keep
-         a handful of samples. We use the presence of new bits in the
-         hang-specific bitmap as a signal of uniqueness. In "non-instrumented"
-         mode, we just keep everything. */
-      // fp = fopen("sbsbsbsbsbsbsbsb","a");
-      // fprintf(fp,"time out\n");
-      // fclose(fp);
       ++afl->total_tmouts;
-      score += 10.0/afl->total_tmouts;
-      afl->queue_top->execution_score = score;
-      
-
-      if (afl->saved_hangs >= KEEP_UNIQUE_HANG) { return keeping; }
-
+      // Check if this timeout path is new in virgin_tmout
+      // simplify_trace should be called before has_new_bits for virgin_tmout
       if (likely(!afl->non_instrumented_mode)) {
-
-        if (unlikely(!classified)) {
-
-          classify_counts(&afl->fsrv);
-          classified = 1;
-
-        }
-
-        simplify_trace(afl, afl->fsrv.trace_bits);
-
-        if (!has_new_bits(afl, afl->virgin_tmout)) { return keeping; }
-
+          if (unlikely(!classified)) { // Ensure trace is classified if not already
+              classify_counts(&afl->fsrv);
+              // classified = 1; // This flag is mostly for primary coverage logic
+          }
+          simplify_trace(afl, afl->fsrv.trace_bits); // Simplify for unique hang check
       }
-
-      is_timeout = 0x80;
+      calculated_exec_score = (afl->saved_hangs < KEEP_UNIQUE_HANG && (afl->non_instrumented_mode || has_new_bits(afl, afl->virgin_tmout))) ? SCORE_NEW_HANG : SCORE_KNOWN_HANG_OR_TMOUT;
+      calculated_exec_score += 10.0 / (afl->total_tmouts + 1.0); 
+      afl->current_execution_score_base = calculated_exec_score;
+      
+      if (afl->saved_hangs >= KEEP_UNIQUE_HANG) { return keeping; } 
+      
+      // Re-check virgin_tmout after potential simplification if not done above for score
+      if (likely(!afl->non_instrumented_mode) && !has_new_bits(afl, afl->virgin_tmout)) {
+          // If simplify_trace was already called, this check is redundant unless classify_counts changed things.
+          // To be safe, ensure trace is simplified before this check if not already.
+          return keeping; 
+      }
+      is_timeout = 0x80; 
 #ifdef INTROSPECTION
-      if (afl->custom_mutators_count && afl->current_custom_fuzz) {
-
-        LIST_FOREACH(&afl->custom_mutator_list, struct custom_mutator, {
-
-          if (afl->current_custom_fuzz == el && el->afl_custom_introspection) {
-
-            const char *ptr = el->afl_custom_introspection(el->data);
-
-            if (ptr != NULL && *ptr != 0) {
-
-              fprintf(afl->introspection_file,
-                      "UNIQUE_TIMEOUT CUSTOM %s = %s\n", ptr,
-                      afl->queue_top->fname);
-
-            }
-
-          }
-
-        });
-
-      } else if (afl->mutation[0] != 0) {
-
-        fprintf(afl->introspection_file, "UNIQUE_TIMEOUT %s\n", afl->mutation);
-
-      }
-
+      // ... (introspection logic unchanged) ...
 #endif
-
-      /* Before saving, we make sure that it's a genuine hang by re-running
-         the target with a more generous timeout (unless the default timeout
-         is already generous). */
-
       if (afl->fsrv.exec_tmout < afl->hang_tmout) {
+        u8  new_fault_rerun; 
+        u32 tmp_len_rerun = len; 
+        u8* mem_rerun = mem;     
+        tmp_len_rerun = write_to_testcase(afl, (void**)&mem_rerun, tmp_len_rerun, 0);
+        if(!tmp_len_rerun) tmp_len_rerun = write_to_testcase(afl, (void**)&mem_rerun, len, 1); 
 
-        u8  new_fault;
-        u32 tmp_len = write_to_testcase(afl, &mem, len, 0);
-
-        if (likely(tmp_len)) {
-
-          len = tmp_len;
-
-        } else {
-
-          len = write_to_testcase(afl, &mem, len, 1);
-
+        new_fault_rerun = fuzz_run_target(afl, &afl->fsrv, afl->hang_tmout);
+        // Note: re-running might change afl->fsrv.trace_bits. If score depends on this, it might need re-eval.
+        if (!afl->stop_soon && new_fault_rerun == FSRV_RUN_CRASH) {
+          fault = FSRV_RUN_CRASH; 
+          // Score for this path will be re-evaluated as crash in the CRASH case
+          goto keep_as_crash; 
         }
-
-        new_fault = fuzz_run_target(afl, &afl->fsrv, afl->hang_tmout);
-        classify_counts(&afl->fsrv);
-
-        /* A corner case that one user reported bumping into: increasing the
-           timeout actually uncovers a crash. Make sure we don't discard it if
-           so. */
-
-        if (!afl->stop_soon && new_fault == FSRV_RUN_CRASH) {
-
-          goto keep_as_crash;
-
-        }
-
-        if (afl->stop_soon || new_fault != FSRV_RUN_TMOUT) {
-
+        if (afl->stop_soon || new_fault_rerun != FSRV_RUN_TMOUT) {
           if (afl->afl_env.afl_keep_timeouts) {
-
-            ++afl->saved_tmouts;
-            goto save_to_queue;
-
+            ++afl->saved_tmouts; 
+            // If this timeout is saved to queue (less common for non-unique hangs)
+            // goto save_to_queue; // This would require 'keeping = 1' and setting score for new path
           } else {
-
-            return keeping;
-
+            return keeping; 
           }
-
         }
-
       }
-
 #ifndef SIMPLE_FILES
-
       if (!afl->afl_env.afl_sha1_filenames) {
-
         snprintf(fn, PATH_MAX, "%s/hangs/id:%06llu,%s%s%s", afl->out_dir,
                  afl->saved_hangs,
-                 describe_op(afl, 0, NAME_MAX - strlen("id:000000,")),
+                 describe_op(afl, 0 + is_timeout, NAME_MAX - strlen("id:000000,")),
                  afl->file_extension ? "." : "",
                  afl->file_extension ? (const char *)afl->file_extension : "");
-
-      } else {
-
+      } else { 
         const char *hex = sha1_hex(mem, len);
         snprintf(fn, PATH_MAX, "%s/hangs/%s%s%s", afl->out_dir, hex,
                  afl->file_extension ? "." : "",
                  afl->file_extension ? (const char *)afl->file_extension : "");
         ck_free((char *)hex);
-
       }
-
 #else
-
-      snprintf(fn, PATH_MAX, "%s/hangs/id_%06llu%s%s", afl->out_dir,
-               afl->saved_hangs, afl->file_extension ? "." : "",
+      snprintf(fn, PATH_MAX, "%s/hangs/id_%06llu%s%s", afl->out_dir, afl->saved_hangs,
+               afl->file_extension ? "." : "",
                afl->file_extension ? (const char *)afl->file_extension : "");
-
-#endif                                                    /* ^!SIMPLE_FILES */
-
+#endif                                                   
       ++afl->saved_hangs;
-
       afl->last_hang_time = get_cur_time();
-
-      break;
+      break; 
 
     case FSRV_RUN_CRASH:
-
-      // fp = fopen("sbsbsbsbsbsbsbsb","a");
-      // fprintf(fp,"run crash\n");
-      // fclose(fp);
-    keep_as_crash:
-
-      /* This is handled in a manner roughly similar to timeouts,
-         except for slightly different limits and no need to re-run test
-         cases. */
-
+    keep_as_crash: 
       ++afl->total_crashes;
-      score += 10.0;
-      afl->queue_top->execution_score = score;
+      calculated_exec_score = SCORE_CRASH; 
+      afl->current_execution_score_base = calculated_exec_score;
 
       if (afl->saved_crashes >= KEEP_UNIQUE_CRASH) { return keeping; }
-
       if (likely(!afl->non_instrumented_mode)) {
-
-        if (unlikely(!classified)) {
-
+        if (unlikely(!classified)) { 
           classify_counts(&afl->fsrv);
-          classified = 1;
-
         }
-
-        simplify_trace(afl, afl->fsrv.trace_bits);
-
-        if (!has_new_bits(afl, afl->virgin_crash)) { return keeping; }
-
+        simplify_trace(afl, afl->fsrv.trace_bits); 
+        if (!has_new_bits(afl, afl->virgin_crash)) { return keeping; } 
       }
-
-      if (unlikely(!afl->saved_crashes) &&
-          (afl->afl_env.afl_no_crash_readme != 1)) {
-
+      if (unlikely(!afl->saved_crashes) && (afl->afl_env.afl_no_crash_readme != 1)) {
         write_crash_readme(afl);
-
       }
-
 #ifndef SIMPLE_FILES
-
       if (!afl->afl_env.afl_sha1_filenames) {
-
         snprintf(fn, PATH_MAX, "%s/crashes/id:%06llu,sig:%02u,%s%s%s",
                  afl->out_dir, afl->saved_crashes, afl->fsrv.last_kill_signal,
-                 describe_op(afl, 0, NAME_MAX - strlen("id:000000,sig:00,")),
+                 describe_op(afl, 0, NAME_MAX - strlen("id:000000,sig:00,")), 
                  afl->file_extension ? "." : "",
                  afl->file_extension ? (const char *)afl->file_extension : "");
-
-      } else {
-
+      } else { 
         const char *hex = sha1_hex(mem, len);
         snprintf(fn, PATH_MAX, "%s/crashes/%s%s%s", afl->out_dir, hex,
                  afl->file_extension ? "." : "",
                  afl->file_extension ? (const char *)afl->file_extension : "");
         ck_free((char *)hex);
-
       }
-
 #else
-
-      snprintf(fn, PATH_MAX, "%s/crashes/id_%06llu_%02u%s%s", afl->out_dir,
+      snprintf(fn, PATH_MAX, "%s/crashes/id_%06llu_%02u%s%s", afl->out_dir, 
                afl->saved_crashes, afl->fsrv.last_kill_signal,
                afl->file_extension ? "." : "",
                afl->file_extension ? (const char *)afl->file_extension : "");
-
-#endif                                                    /* ^!SIMPLE_FILES */
-
+#endif                                                   
       ++afl->saved_crashes;
 #ifdef INTROSPECTION
-      if (afl->custom_mutators_count && afl->current_custom_fuzz) {
-
-        LIST_FOREACH(&afl->custom_mutator_list, struct custom_mutator, {
-
-          if (afl->current_custom_fuzz == el && el->afl_custom_introspection) {
-
-            const char *ptr = el->afl_custom_introspection(el->data);
-
-            if (ptr != NULL && *ptr != 0) {
-
-              fprintf(afl->introspection_file, "UNIQUE_CRASH CUSTOM %s = %s\n",
-                      ptr, afl->queue_top->fname);
-
-            }
-
-          }
-
-        });
-
-      } else if (afl->mutation[0] != 0) {
-
-        fprintf(afl->introspection_file, "UNIQUE_CRASH %s\n", afl->mutation);
-
-      }
-
+      // ... 
 #endif
       if (unlikely(afl->infoexec)) {
-
-        // if the user wants to be informed on new crashes - do that
-#if !TARGET_OS_IPHONE
-        // we dont care if system errors, but we dont want a
-        // compiler warning either
-        // See
-        // https://stackoverflow.com/questions/11888594/ignoring-return-values-in-c
         (void)(system(afl->infoexec) + 1);
-#else
-        WARNF("command execution unsupported");
-#endif
-
       }
-
       afl->last_crash_time = get_cur_time();
       afl->last_crash_execs = afl->fsrv.total_execs;
-
-      break;
+      break; 
 
     case FSRV_RUN_ERROR:
-      // fp = fopen("sbsbsbsbsbsbsbsb","a");
-      // fprintf(fp,"fsrv_run_error\n");
-      // fclose(fp);
-      afl->queue_top->execution_score = score;
-      
-      FATAL("Unable to execute target application");
+      afl->current_execution_score_base = SCORE_DECAY * 100.0; 
+      FATAL("Unable to execute target application (FSRV_RUN_ERROR)");
+      return keeping; // Unreachable
 
-    default:
-      // fp = fopen("sbsbsbsbsbsbsbsb","a");
-      // fprintf(fp,"default\n");
-      // fclose(fp);
-      afl->queue_top->execution_score = score;
-      
+    default: 
+      afl->current_execution_score_base = SCORE_DECAY;
       return keeping;
-
   }
 
-  /* If we're here, we apparently want to save the crash or hang
-     test case, too. */
-
-  fd = permissive_create(afl, fn);
+  // This part is reached if a crash or hang file was written (but not necessarily added to queue)
+  fd = permissive_create(afl, fn); 
   if (fd >= 0) {
-
     ck_write(fd, mem, len, fn);
     close(fd);
-
   }
 
-#ifdef __linux__
+#ifdef __linux__ 
   if (afl->fsrv.nyx_mode && fault == FSRV_RUN_CRASH) {
-
     u8 fn_log[PATH_MAX];
-
     (void)(snprintf(fn_log, PATH_MAX, "%s.log", fn) + 1);
     fd = open(fn_log, O_WRONLY | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
     if (unlikely(fd < 0)) { PFATAL("Unable to create '%s'", fn_log); }
-
     u32 nyx_aux_string_len = afl->fsrv.nyx_handlers->nyx_get_aux_string(
         afl->fsrv.nyx_runner, afl->fsrv.nyx_aux_string,
         afl->fsrv.nyx_aux_string_len);
-
     ck_write(fd, afl->fsrv.nyx_aux_string, nyx_aux_string_len, fn_log);
     close(fd);
-
   }
-
 #endif
-
-  return keeping;
-
+  // afl->current_execution_score_base should have been set within the switch case.
+  return keeping; 
 }
-

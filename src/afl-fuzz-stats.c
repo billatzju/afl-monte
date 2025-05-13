@@ -289,7 +289,7 @@ void load_stats_file(afl_state_t *afl) {
       if (starts_with("saved_hangs", keystring)) {
 
         afl->saved_hangs = strtoull(lptr, &nptr, 10);
-
+        
       }
 
     }
