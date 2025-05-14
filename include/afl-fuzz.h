@@ -498,7 +498,7 @@ typedef struct afl_state {
   sharedmem_t      shm;
   sharedmem_t     *shm_fuzz;
   afl_env_vars_t   afl_env;
-
+  double current_execution_score_base;
   char **argv;                                            /* argv if needed */
 
   /* MOpt:
@@ -644,6 +644,7 @@ typedef struct afl_state {
       saved_crashes,                    /* Crashes with unique signatures   */
       total_tmouts,                     /* Total number of timeouts         */
       saved_tmouts,                     /* Timeouts with unique signatures  */
+      prev_saved_hangs,    
       saved_hangs,                      /* Hangs with unique signatures     */
       last_crash_execs,                 /* Exec counter at last crash       */
       queue_cycle,                      /* Queue round counter              */
@@ -878,7 +879,7 @@ struct custom_mutator {
   void       *dh;
   u8         *post_process_buf;
   u8          stacked_custom_prob, stacked_custom;
-
+  double current_execution_score_base;
   void *data;                                    /* custom mutator data ptr */
 
   /* hooks for the custom mutator function */
@@ -1258,7 +1259,7 @@ void sync_fuzzers(afl_state_t *);
 u32  write_to_testcase(afl_state_t *, void **, u32, u32);
 u8   calibrate_case(afl_state_t *, struct queue_entry *, u8 *, u32, u8);
 void update_state_heap(afl_state_t *afl, u32 state_id, double new_score);
-u8  update_state_scores(afl_state_t *afl);
+u8  update_state_scores(afl_state_t *afl, u8 new_seed_was_saved_this_iteration);
 u8   trim_case(afl_state_t *, struct queue_entry *, u8 *);
 u8   common_fuzz_stuff(afl_state_t *, u8 *, u32);
 u8   common_fuzz_stuff1(afl_state_t *, u8 *,u32);
