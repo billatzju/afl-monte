@@ -1653,7 +1653,7 @@ abort_trimming:
 #define SCORE_NEW_BITS_GENERIC      5.0    // 发现新的位图边（但不足以加入队列）时的分数
 #endif
 #ifndef SCORE_DECAY
-#define SCORE_DECAY                 -0.5   // 如果没有发生有趣的事情，则应用负分（用于状态分数衰减）
+#define SCORE_DECAY                 -0.005   // 如果没有发生有趣的事情，则应用负分（用于状态分数衰减）
 #endif
 
 
@@ -1694,7 +1694,7 @@ abort_trimming:
 #define SCORE_NEW_BITS_GENERIC      5.0    // Score for finding new bitmap edges (not queue-worthy)
 #endif
 #ifndef SCORE_DECAY
-#define SCORE_DECAY                 -0.5   // Score applied if nothing interesting happened (for state score decay)
+#define SCORE_DECAY                 -0.005  // Score applied if nothing interesting happened (for state score decay)
 #endif
 // DEFAULT_NEW_SEED_SCORE_IN_STATE_HEAP is used in update_state_scores, ensure it's defined.
 

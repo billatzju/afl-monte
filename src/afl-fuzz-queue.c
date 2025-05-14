@@ -1119,7 +1119,6 @@ void cull_queue(afl_state_t *afl) {
       // Collect the best seed(s) from each top state
       for (u32 i = 0; i < top_states_count; i++) {
         state_info_t *current_state = top_states[i];
-  
         // Check if the seed heap for this state has entries and current_state is valid
         if (current_state && current_state->heap_size > 0) {
           // Favor only the single best seed (root of the seed max-heap)
@@ -1140,6 +1139,7 @@ void cull_queue(afl_state_t *afl) {
           }
         }
       }
+      //printf("%d\n", actual_favored_count);
       ck_free(top_states);  // Free the array of pointers returned by get_top_states
   
       // Mark the collected unique seeds as favored by iterating through the actual queue
@@ -1169,17 +1169,17 @@ void cull_queue(afl_state_t *afl) {
             }
           }
         } else {
-           // WARNF("State-favored seed ID %u not found in current queue!", target_id);
+           WARNF("State-favored seed ID %u not found in current queue!", target_id);
         }
       }
       ck_free(favored_seed_ids);  // Free the temporary ID array
   
       // Mark entries not favored in this pass as redundant
-      for (u32 i = 0; i < afl->queued_items; i++) {
-        if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
-          mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
-        }
-      }
+      // for (u32 i = 0; i < afl->queued_items; i++) {
+      //   if (afl->queue_buf[i] && likely(!afl->queue_buf[i]->disabled)) {
+      //     mark_as_redundant(afl, afl->queue_buf[i], !afl->queue_buf[i]->favored);
+      //   }
+      // }
   
       if (actual_favored_count > 0 || afl->queued_favored > 0) { // If any changes to favored status
           afl->score_changed = 1; // Indicate that scores/favored status changed

@@ -538,7 +538,7 @@ static inline u8 bitmap_read(u8 *map, u32 index) {
 #define SCORE_KNOWN_HANG_OR_TMOUT   1.0
 #define SCORE_NEW_PATH_BASE         15.0
 #define SCORE_NEW_BITS_GENERIC_BASE 2.0 // Not used directly if new_bits_type > 0 implies new path
-#define SCORE_DECAY                 -0.2
+#define SCORE_DECAY                 -0.001
 
 #include "afl-fuzz.h" // Ensure this includes definitions for SCORE_CRASH, etc.
 
