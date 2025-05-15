@@ -1694,7 +1694,7 @@ abort_trimming:
 #define SCORE_NEW_BITS_GENERIC      5.0    // Score for finding new bitmap edges (not queue-worthy)
 #endif
 #ifndef SCORE_DECAY
-#define SCORE_DECAY                 -0.005  // Score applied if nothing interesting happened (for state score decay)
+#define SCORE_DECAY                 -0.5   // Score applied if nothing interesting happened (for state score decay)
 #endif
 // DEFAULT_NEW_SEED_SCORE_IN_STATE_HEAP is used in update_state_scores, ensure it's defined.
 
