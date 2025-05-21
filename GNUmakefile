@@ -472,19 +472,19 @@ endif
 ready:
 	@echo "[+] Everything seems to be working, ready to compile. ($(shell $(CC) --version 2>&1|head -n 1))"
 
-src/afl-performance.o : $(COMM_HDR) src/afl-performance.c include/hash.h
+src/afl-performance.o : $(COMM_HDR) src/afl-performance.c include/afl-hash.h include/uthash.h
 	$(CC) $(CFLAGS) $(CFLAGS_OPT) $(SPECIAL_PERFORMANCE) -Iinclude -c src/afl-performance.c -o src/afl-performance.o
 
 src/afl-common.o : $(COMM_HDR) src/afl-common.c include/common.h
 	$(CC) $(CFLAGS) $(CFLAGS_FLTO) $(SPECIAL_PERFORMANCE) -c src/afl-common.c -o src/afl-common.o
 
-src/afl-hash.o:$(COMM_HDR) src/afl-hash.c include/afl-hash.h
+src/afl-hash.o:$(COMM_HDR) src/afl-hash.c include/afl-hash.h include/uthash.h
 	$(CC) $(CFLAGS) $(CFLAGS_FLTO) $(SPECIAL_PERFORMANCE) -c src/afl-hash.c -o src/afl-hash.o
 
 src/afl-state-hash.o: $(COMM_HDR) src/afl-state-seed-heap.c include/afl-state-seed-heap.h
 	$(CC) $(CFLAGS) $(CFLAGS_FLTO) $(SPECIAL_PERFORMANCE) -c src/afl-state-seed-heap.c -o src/afl-state-hash.o
 
-src/afl-forkserver.o : $(COMM_HDR) src/afl-forkserver.c src/afl-hash.c include/forkserver.h include/afl-hash.h src/afl-hash.o src/afl-state-hash.o
+src/afl-forkserver.o : $(COMM_HDR) src/afl-forkserver.c src/afl-hash.c include/forkserver.h include/afl-hash.h include/uthash.h src/afl-hash.o src/afl-state-hash.o
 	$(CC) $(CFLAGS) $(CFLAGS_FLTO) $(SPECIAL_PERFORMANCE) src/afl-hash.o src/afl-state-hash.o -c src/afl-forkserver.c -o src/afl-forkserver.o
 
 src/afl-sharedmem.o : $(COMM_HDR) src/afl-sharedmem.c include/sharedmem.h
@@ -497,7 +497,7 @@ ifdef IS_IOS
 endif
 
 afl-showmap: src/afl-showmap.c src/afl-common.o src/afl-sharedmem.o src/afl-forkserver.o  src/afl-performance.o src/afl-hash.o src/afl-state-hash.o  $(COMM_HDR) | test_x86
-	$(CC) $(CFLAGS) include/afl-hash.h include/afl-state-seed-heap.h $(COMPILE_STATIC) $(CFLAGS_FLTO) $(SPECIAL_PERFORMANCE) src/$@.c src/afl-hash.o src/afl-fuzz-mutators.c src/afl-fuzz-python.c src/afl-common.o src/afl-sharedmem.o src/afl-forkserver.o src/afl-performance.o -o $@ $(PYFLAGS) $(LDFLAGS)
+	$(CC) $(CFLAGS) include/afl-hash.h include/uthash.h include/afl-state-seed-heap.h $(COMPILE_STATIC) $(CFLAGS_FLTO) $(SPECIAL_PERFORMANCE) src/$@.c src/afl-hash.o src/afl-fuzz-mutators.c src/afl-fuzz-python.c src/afl-common.o src/afl-sharedmem.o src/afl-forkserver.o src/afl-performance.o -o $@ $(PYFLAGS) $(LDFLAGS)
 ifdef IS_IOS
 	@ldid -Sentitlements.plist $@ && echo "[+] Signed $@" || { echo "[-] Failed to sign $@"; }
 endif
